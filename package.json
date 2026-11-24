@@ -1,0 +1,25 @@
+{
+  "name": "modern-war-strategy",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "map": "node tools/build-world.mjs",
+    "sim": "tsx tools/sim-test.ts"
+  },
+  "devDependencies": {
+    "@types/d3-delaunay": "^6.0.4",
+    "@types/d3-geo": "^3.1.1",
+    "d3-delaunay": "^6.0.6",
+    "d3-geo": "^3.1.2",
+    "polygon-clipping": "^0.15.7",
+    "topojson-client": "^3.1.0",
+    "tsx": "^4.23.15",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6",
+    "world-atlas": "^2.0.2"
+  }
+}
