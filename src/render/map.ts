@@ -1,5 +1,5 @@
 import type { GameState } from '../types';
-import { W } from '../world';
+import { W, proj } from '../world';
 import { CAMP_COLORS } from '../data/countries';
 import { C, atWar, campsAtWar, sameSide, side, airShare, supplyAt } from '../game/rules';
 import { fx } from '../game/sim';
@@ -14,6 +14,13 @@ export interface ViewState {
 }
 
 const OCEAN = '#3B4B5C';
+const FORMAL: Record<string, string> = { '840': 'アメリカ合衆国', '156': '中華人民共和国', '643': 'ロシア連邦', '392': '日本', '826': 'イギリス', '250': 'フランス', '276': 'ドイツ', '356': 'インド', '410': '大韓民国', '408': '朝鮮民主主義人民共和国' };
+const SEAS: [string, number, number][] = [
+  ['日本海', 135, 40.5], ['黄海', 123.2, 35.2], ['東シナ海', 125.5, 28.5], ['南シナ海', 114, 14], ['フィリピン海', 133, 20], ['オホーツク海', 149, 53],
+  ['太平洋', 170, 28], ['太平洋', -140, 15], ['大西洋', -40, 32], ['大西洋', -20, -20], ['インド洋', 80, -12], ['アラビア海', 64, 15], ['ベンガル湾', 88, 14],
+  ['地中海', 18, 34.5], ['北海', 3, 56.5], ['バルト海', 19.5, 58], ['黒海', 34, 43.3], ['カリブ海', -75, 15], ['メキシコ湾', -90, 25], ['紅海', 38.5, 20],
+  ['タスマン海', 160, -38], ['ノルウェー海', 4, 68], ['ペルシャ湾', 51.5, 27],
+];
 const FILLER = ['#8A8466', '#7F8668', '#8C7E68', '#7A8070'];
 
 export class MapView {
@@ -25,6 +32,8 @@ export class MapView {
   fillerPaths: { country: string; p: Path2D }[] = [];
   outline = new Path2D(); provEdges = new Path2D();
   lastKey = ''; fogKey = '';
+  countryLabels: { id: string; x: number; y: number; area: number }[] = [];
+  seaLabels: { t: string; x: number; y: number }[] = [];
   dpr = 1;
 
   constructor(canvas: HTMLCanvasElement, relief: HTMLImageElement) {
@@ -40,6 +49,20 @@ export class MapView {
     }
     for (const f of W.fillers) { const p = new Path2D(); for (const ring of f.paths) { ring.forEach(([x, y], i) => (i ? p.lineTo(x, y) : p.moveTo(x, y))); p.closePath(); } this.fillerPaths.push({ country: f.country, p }); }
     for (const o of W.outlines) for (const ring of o.paths) { ring.forEach(([x, y], i) => (i ? this.outline.lineTo(x, y) : this.outline.moveTo(x, y))); this.outline.closePath(); }
+    // 国名の位置：首都と陸続きの州の重心
+    const areaOf = (paths: [number, number][][]) => paths.reduce((a, r) => { let v = 0; for (let i = 0; i < r.length - 1; i++) v += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1]; return a + Math.abs(v) / 2; }, 0);
+    const cen = (paths: [number, number][][]) => { let x = 0, y = 0, n = 0; for (const r of paths) for (const [px, py] of r) { x += px; y += py; n++; } return [x / n, y / n]; };
+    const byC: Record<string, { node: number; area: number; c: number[] }[]> = {};
+    for (const pr of W.provinces) { const c = W.nodes[pr.node].country; (byC[c] ??= []).push({ node: pr.node, area: areaOf(pr.paths), c: cen(pr.paths) }); }
+    for (const [id, ps] of Object.entries(byC)) {
+      const big = ps.reduce((a, b) => (b.area > a.area ? b : a));
+      const comp = new Set([big.node]); const q = [big.node];
+      while (q.length) { const n = q.shift()!; for (const e of W.adj[n]) if (W.nodes[e.to].country === id && !comp.has(e.to)) { comp.add(e.to); q.push(e.to); } }
+      let ax = 0, ay = 0, at = 0;
+      for (const p of ps) if (comp.has(p.node)) { ax += p.c[0] * p.area; ay += p.c[1] * p.area; at += p.area; }
+      this.countryLabels.push({ id, x: ax / at, y: ay / at, area: at });
+    }
+    for (const [t, lon, lat] of SEAS) { const [x, y] = proj(lon, lat); this.seaLabels.push({ t, x, y }); }
     this.resize();
   }
 
@@ -89,6 +112,7 @@ export class MapView {
       g.fillStyle = this.colorFor(s, v.mode, ns.ctrl); g.fill(p);
       if (ns.ctrl !== ns.owner) { g.save(); g.clip(p); g.fillStyle = this.stripe(g, this.colorFor(s, v.mode, ns.owner)); g.fillRect(...this.provBoxXYWH(n)); g.restore(); }
     }
+    g.fillStyle = 'rgba(122,118,108,0.2)'; for (const p of this.provPaths.values()) g.fill(p);
     g.globalCompositeOperation = 'soft-light'; g.drawImage(this.relief, 0, 0, W.W, W.H);
     g.globalCompositeOperation = 'source-over';
     g.lineJoin = 'round';
@@ -137,6 +161,35 @@ export class MapView {
 
   drawOverlays(s: GameState, v: ViewState, frac: number) {
     const g = this.ctx; const z = this.cam.z; const now = performance.now();
+    // 海と国の名前
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const l of this.seaLabels) {
+      const [x, y] = this.toScreen(l.x, l.y); if (!this.onScreen(x, y)) continue;
+      const fs = Math.max(11, Math.min(20, 13 * Math.sqrt(z)));
+      g.font = `italic 500 ${fs}px 'Noto Sans JP', sans-serif`; g.fillStyle = 'rgba(205,218,230,0.55)';
+      this.spaced(l.t, x, y, fs * 0.35, false);
+    }
+    for (const l of this.countryLabels) {
+      const [x, y] = this.toScreen(l.x, l.y); if (!this.onScreen(x, y, 200)) continue;
+      const name = FORMAL[l.id] ?? s.countries[l.id]?.name ?? '';
+      const fs = Math.sqrt(l.area) * z * 0.09;
+      if (fs < 11 || fs > 60) continue;
+      g.font = `700 ${Math.min(34, fs)}px 'Noto Sans JP', sans-serif`;
+      g.lineWidth = 3; g.strokeStyle = 'rgba(20,20,22,0.35)'; g.fillStyle = 'rgba(245,240,228,0.72)';
+      this.spaced(name, x, y, Math.min(34, fs) * 0.45, true);
+    }
+    g.textAlign = 'left';
+    // 予約した打撃の軌道
+    for (const st of s.strikes) {
+      if (st.owner !== s.player) continue;
+      const from = this.launchPos(s, st.target); const t = W.nodes[st.target];
+      const [a, b] = this.toScreen(from[0], from[1]), [c, d] = this.toScreen(t.x, t.y);
+      if (Math.abs(a - c) > innerWidth) continue;
+      const mx = (a + c) / 2, my = (b + d) / 2 - Math.hypot(c - a, d - b) * 0.22;
+      g.strokeStyle = 'rgba(232,179,106,0.9)'; g.lineWidth = 2; g.setLineDash([6, 5]); g.lineDashOffset = -now / 60;
+      g.beginPath(); g.moveTo(a, b); g.quadraticCurveTo(mx, my, c, d); g.stroke(); g.setLineDash([]); g.lineDashOffset = 0;
+      g.strokeStyle = '#E8B36A'; g.lineWidth = 2.5; g.beginPath(); g.arc(c, d, 10, 0, 7); g.stroke(); g.beginPath(); g.arc(c, d, 4, 0, 7); g.stroke();
+    }
     // 陸路
     g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.10)';
     g.beginPath();
@@ -150,6 +203,21 @@ export class MapView {
     // 重ね表示
     if (v.overlay === 'sea') this.drawSea(s);
     if (v.overlay === 'air') this.drawAir(s);
+    // 前線（自陣営と交戦中の敵の境目）
+    g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 2.5; g.setLineDash([6, 5]);
+    g.beginPath();
+    for (const [a1, b1] of W.edges) {
+      const ca = s.nodes[a1].ctrl, cb = s.nodes[b1].ctrl;
+      const fa = sameSide(s, ca, s.player), fb = sameSide(s, cb, s.player);
+      if (fa === fb) continue;
+      if (!atWar(s, s.player, fa ? cb : ca) && !campsAtWar(s, C(s, s.player).camp, C(s, fa ? cb : ca).camp)) continue;
+      const [x1, y1] = this.toScreen(W.nodes[a1].x, W.nodes[a1].y), [x2, y2] = this.toScreen(W.nodes[b1].x, W.nodes[b1].y);
+      if (Math.abs(x1 - x2) > innerWidth || (!this.onScreen(x1, y1) && !this.onScreen(x2, y2))) continue;
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, L = Math.hypot(x2 - x1, y2 - y1) || 1;
+      const nx = -(y2 - y1) / L, ny = (x2 - x1) / L, h = Math.min(40, L * 0.35);
+      g.moveTo(mx - nx * h, my - ny * h); g.lineTo(mx + nx * h, my + ny * h);
+    }
+    g.stroke(); g.setLineDash([]);
     // 攻勢の矢印
     for (const o of s.orders) {
       const mine = o.owner === s.player, ally = sameSide(s, o.owner, s.player);
@@ -187,13 +255,25 @@ export class MapView {
     for (const n of W.nodes) {
       const [x, y] = this.toScreen(n.x, n.y); if (!this.onScreen(x, y)) continue;
       const showName = n.capital ? z > 0.45 : n.ind >= 3 ? z > 0.9 : z > 1.5;
-      if (showName) this.label(n.name, x + 9, y, n.capital ? 13 : 12, n.capital);
-      if (z > 0.55) this.chips(s, n.id, x, y + 14);
+      if (showName) this.label(n.name, x + 9, y, n.capital ? 15 : 13, true);
+      if (z > 0.55) this.chips(s, n.id, x + 2, y + 12);
     }
     if (v.overlay === 'sea' || z > 0.8) this.fleetChips(s);
     this.drawFx(now);
   }
 
+  spaced(t: string, x: number, y: number, sp: number, stroke: boolean) {
+    const g = this.ctx; const ws = [...t].map((ch) => g.measureText(ch).width);
+    const total = ws.reduce((a, b) => a + b, 0) + sp * (ws.length - 1);
+    let cx = x - total / 2; g.textAlign = 'left';
+    [...t].forEach((ch, i) => { if (stroke) g.strokeText(ch, cx, y); g.fillText(ch, cx, y); cx += ws[i] + sp; });
+    g.textAlign = 'center';
+  }
+  launchPos(s: GameState, target: number): [number, number] {
+    let best = C(s, s.player).capital, bd = Infinity; const t = W.nodes[target];
+    for (const n of W.nodes) if (s.nodes[n.id].ctrl === s.player) { const d = Math.hypot(n.x - t.x, n.y - t.y); if (d < bd) { bd = d; best = n.id; } }
+    return [W.nodes[best].x, W.nodes[best].y];
+  }
   arrow(x1: number, y1: number, x2: number, y2: number, col: string, w: number, prog: number) {
     const g = this.ctx;
     let [a, b] = this.toScreen(x1, y1); let [c, d] = this.toScreen(x2, y2);
@@ -202,8 +282,9 @@ export class MapView {
     const ux = (c - a) / len, uy = (d - b) / len;
     a += ux * 8; b += uy * 8; c -= ux * 10; d -= uy * 10;
     const mx = (a + c) / 2 - uy * len * 0.12, my = (b + d) / 2 + ux * len * 0.12;
-    g.lineCap = 'round'; g.strokeStyle = col; g.globalAlpha = 0.9; g.lineWidth = w;
-    g.beginPath(); g.moveTo(a, b); g.quadraticCurveTo(mx, my, c, d); g.stroke();
+    g.lineCap = 'round'; g.strokeStyle = col; g.globalAlpha = 0.92; g.lineWidth = w;
+    if (col === '#F2F2F2') g.setLineDash([w * 1.2, w * 0.9]);
+    g.beginPath(); g.moveTo(a, b); g.quadraticCurveTo(mx, my, c, d); g.stroke(); g.setLineDash([]);
     if (prog > 0) { g.strokeStyle = '#1E1F21'; g.lineWidth = 2; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(a, b); g.quadraticCurveTo(mx, my, a + (c - a) * prog + (mx - (a + c) / 2) * 0.5, b + (d - b) * prog + (my - (b + d) / 2) * 0.5); g.stroke(); g.setLineDash([]); }
     const tx = c - mx, ty = d - my, tl = Math.hypot(tx, ty) || 1;
     const hx = tx / tl, hy = ty / tl;
@@ -216,16 +297,17 @@ export class MapView {
     g.closePath(); g.fillStyle = '#F2F2F2'; g.strokeStyle = '#1E1F21'; g.lineWidth = 1.5; g.fill(); g.stroke();
   }
   label(t: string, x: number, y: number, size: number, bold: boolean) {
-    const g = this.ctx; g.font = `${bold ? 700 : 500} ${size}px 'Noto Sans JP', sans-serif`;
-    g.lineWidth = 3.5; g.strokeStyle = 'rgba(24,25,27,0.9)'; g.lineJoin = 'round'; g.strokeText(t, x, y); g.fillStyle = '#F2F2F2'; g.fillText(t, x, y);
+    const g = this.ctx; g.font = `${bold ? 700 : 600} ${size}px 'Noto Sans JP', sans-serif`; g.textAlign = 'left';
+    g.lineWidth = 4; g.strokeStyle = 'rgba(24,25,27,0.9)'; g.lineJoin = 'round'; g.strokeText(t, x, y); g.fillStyle = '#F2F2F2'; g.fillText(t, x, y);
   }
   chip(x: number, y: number, bar: string, text: string, dashed = false): number {
-    const g = this.ctx; g.font = `600 11px 'JetBrains Mono', 'Noto Sans JP', monospace`;
-    const w = g.measureText(text).width + 14, h = 17;
-    g.fillStyle = 'rgba(30,31,33,0.92)'; g.fillRect(x, y, w, h);
-    if (dashed) { g.setLineDash([3, 2]); g.strokeStyle = '#B5B6B9'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.setLineDash([]); }
-    else { g.fillStyle = bar; g.fillRect(x, y, 4, h); }
-    g.fillStyle = '#F2F2F2'; g.fillText(text, x + (dashed ? 6 : 8), y + h / 2 + 0.5); return w;
+    const g = this.ctx; g.font = `600 12px 'Noto Sans JP', sans-serif`; g.textBaseline = 'middle'; g.textAlign = 'left';
+    const w = g.measureText(text).width + (dashed ? 14 : 18), h = 20;
+    g.fillStyle = 'rgba(26,27,29,0.94)'; g.fillRect(x, y, w, h);
+    g.lineWidth = 1;
+    if (dashed) { g.setLineDash([4, 3]); g.strokeStyle = bar || '#E6E6E6'; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.setLineDash([]); }
+    else { g.strokeStyle = 'rgba(255,255,255,0.28)'; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.fillStyle = bar; g.fillRect(x + 1, y + 1, 5, h - 2); }
+    g.fillStyle = '#F2F2F2'; g.fillText(text, x + (dashed ? 7 : 11), y + h / 2 + 0.5); return w;
   }
   chips(s: GameState, n: number, x: number, y: number) {
     const ns = s.nodes[n]; const p = s.player;
@@ -234,10 +316,14 @@ export class MapView {
     if (sameSide(s, ns.ctrl, p)) {
       const by = new Map<string, { land: number; ad: number }>();
       for (const u of units) { const e = by.get(u.owner) ?? { land: 0, ad: 0 }; if (u.kind === 'land') e.land++; else e.ad++; by.set(u.owner, e); }
-      for (const [o, e] of by) { if (o !== p && this.cam.z < 1.3) continue; if (e.land) cx += this.chip(cx, y, this.colorFor(s, 'camp', o), `${o === p ? '' : C(s, o).name.slice(0, 2)}陸${e.land}`) + 3; if (e.ad && this.cam.z > 1.8) cx += this.chip(cx, y, this.colorFor(s, 'camp', o), `防${e.ad}`) + 3; }
+      for (const [o, e] of by) {
+        if (o !== p && this.cam.z < 1.3) continue;
+        const t = [e.land ? `陸${e.land}` : '', e.ad ? `防${e.ad}` : ''].filter(Boolean).join(' ');
+        cx += this.chip(cx, y, o === p ? '#9CCB8E' : CAMP_COLORS.ally, `${o === p ? '' : C(s, o).name.slice(0, 2) + ' '}${t}`) + 3;
+      }
     } else if (atWar(s, p, ns.ctrl) || campsAtWar(s, C(s, p).camp, C(s, ns.ctrl).camp)) {
       const seen = s.seen[n];
-      if (seen && s.day - seen.day <= 1) { if (seen.land > 0.2) this.chip(cx, y, '#D58894', `陸${Math.max(1, Math.round(seen.land))}`); }
+      if (seen && s.day - seen.day <= 1) { if (seen.land > 0.2 || seen.ad) this.chip(cx, y, '#E0606A', [seen.land > 0.2 ? `陸${Math.max(1, Math.round(seen.land))}` : '', seen.ad ? `防${seen.ad}` : ''].filter(Boolean).join(' ')); }
       else if (seen && s.day - seen.day <= 21 && seen.land >= 0.5) this.chip(cx, y, '', `?≈${Math.round(seen.land)}`, true);
       else if (W.adj[n].some((e) => sameSide(s, s.nodes[e.to].ctrl, p))) this.chip(cx, y, '', '?', true);
     }
@@ -248,9 +334,9 @@ export class MapView {
       const [x, y] = this.toScreen(z.x, z.y); if (!this.onScreen(x, y)) continue;
       const own = s.units.filter((u) => u.kind === 'fleet' && u.zone === z.id && !u.transit && sameSide(s, u.owner, p)).length;
       let cx = x;
-      if (own) cx += this.chip(cx, y, CAMP_COLORS.self, `艦${own}`) + 3;
+      if (own) cx += this.chip(cx, y, '#7FA6D6', `艦${own}`) + 3;
       const enemyPower = Object.entries(s.seaShare[z.id] ?? {}).filter(([k]) => Number(k) !== psd && campsAtWar(s, Number(k), C(s, p).camp)).reduce((a, [, v]) => a + v, 0);
-      if (enemyPower > 0) this.chip(cx, y, '#D58894', `敵艦≈${Math.max(1, Math.round(enemyPower))}`);
+      if (enemyPower > 0) this.chip(cx, y, '#E0606A', `敵艦≈${Math.max(1, Math.round(enemyPower))}`, true);
     }
   }
   drawSea(s: GameState) {

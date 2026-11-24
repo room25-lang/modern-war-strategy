@@ -36,6 +36,7 @@ async function boot() {
   };
   const ui = new UI(host);
   ui.mount();
+  (window as unknown as { __mws: unknown }).__mws = { host, ui, A };
 
   // ---------- 開始画面 ----------
   function setupScreen() {

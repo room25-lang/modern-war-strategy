@@ -7,7 +7,7 @@ export interface WNode {
 export interface WZone { id: number; name: string; x: number; y: number; lon: number; lat: number; adj: number[]; region: number }
 export interface WRegion { id: number; name: string; x: number; y: number }
 export interface WorldData {
-  W: number; H: number;
+  W: number; H: number; seam: number; latTop: number; latBot: number;
   nodes: WNode[]; edges: [number, number, number][];
   zones: WZone[]; regions: WRegion[];
   provinces: { node: number; paths: [number, number][][] }[];

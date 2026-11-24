@@ -39,3 +39,12 @@ export function km(a: WNode, b: WNode): number {
 }
 export const nodeKm = (a: number, b: number) => km(W.nodes[a], W.nodes[b]);
 export function isAdj(a: number, b: number): boolean { return W.adj[a].some((e) => e.to === b); }
+
+// 経度緯度 → 地図上の座標（tools/build-world.mjs と同じミラー図法）
+export function proj(lon: number, lat: number): [number, number] {
+  const m = (la: number) => 1.25 * Math.log(Math.tan(Math.PI / 4 + 0.4 * la * Math.PI / 180));
+  const yT = m(W.latTop), yB = m(W.latBot);
+  const L = lon < W.seam ? lon + 360 : lon;
+  const la = Math.max(W.latBot, Math.min(W.latTop, lat));
+  return [((L - W.seam) / 360) * W.W, ((yT - m(la)) / (yT - yB)) * W.H];
+}

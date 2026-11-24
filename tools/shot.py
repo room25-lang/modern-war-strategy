@@ -12,7 +12,7 @@ async def main():
         logs = []
         pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}'))
         pg.on('pageerror', lambda e: logs.append(f'PAGEERROR: {e}'))
-        await pg.goto(URL + '?speed=40')
+        await pg.goto(URL)
         await pg.wait_for_timeout(2500)
         await pg.screenshot(path=OUT + '_1setup.png')
         await pg.click('[data-start]')
