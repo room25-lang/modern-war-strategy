@@ -7,7 +7,9 @@ URL, OUT, SEED, SECS = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.arg
 # 任意：幅 高さ 中心経度 中心緯度 拡大率 見出し
 VW, VH = (int(sys.argv[5]), int(sys.argv[6])) if len(sys.argv) > 6 else (1920, 1080)
 LON, LAT, ZOOM = (float(sys.argv[7]), float(sys.argv[8]), float(sys.argv[9])) if len(sys.argv) > 9 else (None, None, None)
-SUB = sys.argv[10] if len(sys.argv) > 10 else "CPU同士の対戦　約2年を20秒で"
+SUB = sys.argv[10] if len(sys.argv) > 10 else "CPU同士の対戦"
+SWITCH = float(sys.argv[11]) if len(sys.argv) > 11 else None  # 世界地図に切り替える位置（0〜1）
+TRANS = 45
 FPS = 30
 os.makedirs(OUT, exist_ok=True)
 
@@ -42,6 +44,13 @@ PORTRAIT = """
 #rec .rc div.hg{font-size:46px;padding:18px 30px} #rec .rc div.hg small{font-size:26px}
 #rec .rl{left:40px;right:40px;bottom:70px;flex-wrap:wrap;justify-content:center;font-size:24px;gap:10px 22px}
 #rec .rl i{width:28px;height:18px}
+#rec .rk{display:none}
+#rec.world .rk{display:block;position:absolute;left:60px;right:60px;top:1240px;background:rgba(10,16,24,.82);border:1px solid rgba(240,199,94,.5);border-radius:10px;padding:18px 26px;color:#E6E6E6;font-size:28px}
+#rec .rk h4{margin:0 0 10px;font-size:26px;color:#F0C75E;font-weight:700}
+#rec .rk p{display:flex;align-items:center;gap:14px;margin:8px 0}
+#rec .rk b{width:170px;font-weight:700} #rec .rk span{flex:1;height:22px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden} #rec .rk span i{display:block;height:100%}
+#rec .rk em{width:80px;text-align:right;font-style:normal;font-weight:700}
+#rec.world .rc{bottom:auto;top:330px}
 """
 
 async def main():
@@ -69,11 +78,13 @@ async def main():
           window.__cap = []; window.__seen = 0;
         }""")
         frames = int(SECS * FPS)
+        if SWITCH is not None:
+            await pg.evaluate(f"() => {{ const W = window.__mws.host.view; window.__c0 = {{ x: W.cam.x, y: W.cam.y, z: W.cam.z }}; window.__sw = {int(SWITCH * SECS * FPS)}; const d = document.createElement('div'); d.className = 'rk'; document.getElementById('rec').appendChild(d); }}")
         for i in range(frames):
             await pg.evaluate(f"""() => {{
               const M = window.__mws; const s = M.host.s; const target = Math.min(s.endDay, Math.floor(({i} + 1) * s.endDay / {frames}));
               while (s.day < target && !s.over) M.step(s);
-              const wk = Math.min(104, Math.floor(s.day / 7) + 1);
+              const wk = Math.min(s.endDay / 7, Math.floor(s.day / 7) + 1);
               document.querySelector('#rec .rw').innerHTML = `第${{wk}}週<small>${{s.phase === 'tension' ? '緊張期' : '戦争中'}}</small>`;
               const fresh = s.news.slice(window.__seen); window.__seen = s.news.length;
               const big = fresh.filter((n) => /開戦|降伏|講和|宣戦|裏切り|首都/.test(n.text) && !/中小国陣営/.test(n.text))
@@ -88,6 +99,19 @@ async def main():
                 html = `<div class="hg">覇権国：${{s.countries[top[0]].name}}<small>世界の拠点の${{Math.round(top[1] / all * 100)}}%を支配</small></div>`;
               }}
               document.querySelector('#rec .rc').innerHTML = html;
+              if (window.__sw != null) {{
+                const W = M.host.view; const t = Math.max(0, Math.min(1, ({i} - window.__sw) / {TRANS})); const e = t * t * (3 - 2 * t);
+                const z0 = window.__c0.z, z1 = innerWidth / 4096;
+                W.cam.z = Math.exp(Math.log(z0) + (Math.log(z1) - Math.log(z0)) * e);
+                W.cam.x = window.__c0.x + (2048 - window.__c0.x) * e; W.cam.y = window.__c0.y + (929 - window.__c0.y) * e; W.clamp();
+                document.getElementById('rec').classList.toggle('world', t > 0.5);
+                if (t > 0.5) {{
+                  const v = {{}}; let all = 0;
+                  for (const n of s.nodes) {{ v[n.ctrl] = (v[n.ctrl] ?? 0) + 1; all++; }}
+                  const top = Object.entries(v).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                  document.querySelector('#rec .rk').innerHTML = '<h4>世界の拠点の支配率</h4>' + top.map(([k, c]) => `<p><b>${{s.countries[k].name}}</b><span><i style="width:${{Math.round(c / all * 100)}}%;background:${{s.countries[k].color}}"></i></span><em>${{Math.round(c / all * 100)}}%</em></p>`).join('');
+                }}
+              }}
             }}""")
             await pg.evaluate("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))")
             await pg.screenshot(path=f'{OUT}/{i:04d}.jpg', type='jpeg', quality=88)

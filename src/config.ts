@@ -1,7 +1,7 @@
 // ===== 数値バランス（仮の値。遊びながらここを直す） =====
 export const CFG = {
   dayMs: 60000 / 7,          // 1日の実時間（1分＝1週間）
-  totalWeeks: 104,           // 約2年
+  totalWeeks: 240,           // 約4年半（1分=1週で最大4時間）
   tensionWeeks: 12,          // 緊張期
   // 部隊の生産（pt と 週）
   cost: { land: 60, air: 80, fleet: 120, ad: 40 } as Record<string, number>,
