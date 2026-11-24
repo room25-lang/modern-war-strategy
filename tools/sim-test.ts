@@ -36,3 +36,7 @@ const EU = new Set(['西欧', '北欧・バルト', '東欧', 'ロシア西部']
 const capEU = s.news.filter((n) => n.text.includes('占領') && W.nodes.some((nd) => EU.has(nd.region) && n.text.includes(`が${nd.name}（`))).length;
 const changed = W.nodes.filter((n, i) => s.nodes[i].ctrl !== n.country).length;
 console.log('ALL_CAPTURES:', events.filter((e) => e.kind === 'capture').length, 'EU_CAPTURES:', capEU, 'NODES_CHANGED_HANDS:', changed, 'EU_CHANGED:', W.nodes.filter((n, i) => EU.has(n.region) && s.nodes[i].ctrl !== n.country).length);
+const terr = (id: string) => W.nodes.reduce((a, n, i) => a + (s.nodes[i].ctrl === id ? n.ind + 1 : 0), 0);
+const base0 = (id: string) => (W.nodesByCountry[id] ?? []).reduce((a, n) => a + W.nodes[n].ind + 1, 0);
+console.log('TERRITORY:', s.majors.map((m) => `${s.countries[m].name}${Math.round(terr(m) / base0(m) * 100)}%`).join(' '));
+console.log('BETRAYALS:', events.filter((e) => e.kind === 'war').length, 'wars:', s.wars.length);

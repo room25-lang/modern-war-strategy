@@ -3,6 +3,7 @@ import { W, nodeKm } from '../world';
 import { CFG } from '../config';
 import { C, atWar, chance, enemyCampIdle, exhaustion, genF, hostileNode, landAt, rand, sameSide, side, seaOK } from './rules';
 import * as A from './actions';
+import { declareWar } from './sim';
 
 const diff = (s: GameState) => CFG.diff[s.difficulty];
 const ownNodes = (s: GameState, id: string) => { const o: number[] = []; for (let i = 0; i < W.nodes.length; i++) if (s.nodes[i].ctrl === id) o.push(i); return o; };
@@ -46,6 +47,39 @@ export function aiWarGoal(s: GameState, c: Country) {
   }
   cand.sort((a, b) => b[1] - a[1]);
   c.warGoal = cand.slice(0, 4 + Math.floor(rand(0, 4))).map((x) => x[0]);
+}
+
+// ---------- 領土拡大（毎週）：どの国も、勝てそうな隣国があれば宣戦する。同盟国も例外ではない ----------
+export function aiExpand(s: GameState, c: Country) {
+  if (s.phase !== 'war' || c.capitulated || (!c.major && !c.fights)) return;
+  if (exhaustion(s, c.id) > 0.5 || c.opinion < 38 || (c.peace['_'] ?? 0) > s.day) return;
+  const foes = s.majors.filter((m) => atWar(s, c.id, m)).length;
+  if (foes >= (c.major ? 2 : 1)) return;
+  const p = c.major ? ({ easy: 0.15, normal: 0.28, hard: 0.4 } as Record<string, number>)[s.difficulty] : 0.06;
+  if (!chance(p)) return;
+  const pow = (id: string) => s.units.reduce((a, u) => a + (u.owner === id && u.kind === 'land' ? u.strength / 100 * genF(C(s, id), 'armor') : 0), 0);
+  const myPow = pow(c.id);
+  const front = new Map<string, number>();
+  for (let n = 0; n < W.nodes.length; n++) {
+    if (s.nodes[n].ctrl !== c.id) continue;
+    for (const e of W.adj[n]) { const t = s.nodes[e.to].ctrl; if (t !== c.id && !atWar(s, c.id, t)) front.set(t, (front.get(t) ?? 0) + W.nodes[e.to].ind + 1); }
+    // 海の向こう（同じ海域の港）も狙う
+    if (c.major && W.nodes[n].port) for (const z of W.nodes[n].zones) for (const p of W.portsByZone[z]) { const t = s.nodes[p].ctrl; if (t !== c.id && !atWar(s, c.id, t)) front.set(t, (front.get(t) ?? 0) + (W.nodes[p].ind + 1) * 0.6); }
+  }
+  let best = '', bv = 0;
+  for (const [t, gain] of front) {
+    const T = C(s, t); if (T.capitulated) continue;
+    let tp = pow(t) + (W.nodesByCountry[t] ?? []).length * 0.3;
+    // 相手の陣営が助けに来る分も見込む
+    if (T.camp >= 0 && T.camp !== c.camp) for (const m of s.majors) if (m !== t && C(s, m).camp === T.camp) tp += pow(m) * 0.4;
+    const betray = c.camp >= 0 && T.camp === c.camp;
+    const req = betray ? 1.8 : T.camp < 0 ? 1.3 : 1.6;
+    const ratio = myPow / Math.max(0.5, tp) * rand(0.85, 1.15);
+    if (ratio < req) continue;
+    const v = (gain + T.indBase * 0.3) * Math.min(3, ratio / req) * (betray ? 0.8 : 1);
+    if (v > bv) { bv = v; best = t; }
+  }
+  if (best) declareWar(s, c.id, best);
 }
 
 // ---------- 毎週 ----------
@@ -150,8 +184,10 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
     else if (best >= 0 && s.difficulty === 'hard' && chance(0.05)) A.orderTo(s, c.id, n, best); // 陽動
   }
   // 上陸作戦（陸の前線がないとき）
-  if (c.major && (s.day + Number(c.id)) % 14 === 0) {
-    for (const g of c.warGoal) {
+  if (c.major && (s.day + Number(c.id)) % 7 === 0) {
+    const ports: number[] = []; for (let n = 0; n < W.nodes.length; n++) if (W.nodes[n].port && hostileNode(s, c.id, n)) ports.push(n);
+    const goals = [...c.warGoal.filter((g) => ports.includes(g)), ...ports.filter((g) => !c.warGoal.includes(g))];
+    for (const g of goals) {
       if (!hostileNode(s, c.id, g) || !W.nodes[g].zones.length) continue;
       const from = ownNodes(s, c.id).find((n) => W.nodes[n].port && landAt(s, n).filter((u) => u.owner === c.id && !u.order).length >= 3
         && W.nodes[n].zones.some((z) => W.nodes[g].zones.includes(z) && seaOK(s, z, side(s, c.id))));

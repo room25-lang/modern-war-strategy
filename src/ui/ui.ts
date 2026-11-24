@@ -192,7 +192,8 @@ export class UI {
         ${hostile ? `<button type="button" data-act="strikeAt" class="hot">打撃</button>` : ''}
         ${canGoal ? `<button type="button" data-act="goal">${goal ? '戦争目的から外す' : '戦争目的に加える'}</button>` : ''}
         ${!friendly ? `<button type="button" data-act="droneHere">偵察を向ける</button>` : ''}
-        ${!ctrl.major && !friendly && !hostile ? `<button type="button" data-act="diploOpen" data-arg="${ctrl.id}">外交</button>` : ''}
+        ${!friendly && !hostile && s.phase === 'war' ? `<button type="button" data-act="declareNode" class="danger">${ctrl.name}に宣戦</button>` : ''}
+        ${!friendly && !hostile ? `<button type="button" data-act="diploOpen" data-arg="${ctrl.id}">外交</button>` : ''}
       </div>`;
   }
 
@@ -255,7 +256,7 @@ export class UI {
   }
 
   // ---------- パネル ----------
-  open(p: Panel) { this.panel = this.panel === p ? null : p; this.renderPanel(); document.querySelectorAll('#cats button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.panel === this.panel)); }
+  open(p: Panel) { this.panel = this.panel === p ? null : p; this.renderPanel(); this.todo(); document.querySelectorAll('#cats button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.panel === this.panel)); }
   renderPanel() {
     const el = $('#panel');
     if (!this.panel) { el.classList.add('hidden'); return; }
@@ -290,13 +291,14 @@ export class UI {
           ${!war ? `<button type="button" data-act="aid">経済援助（${CFG.aidCost}pt）</button>` : ''}
           ${!t.major && !war ? `<button type="button" data-act="base">基地を置く（${CFG.baseCost}pt）</button>` : ''}
           ${sameSide(s, me.id, t.id) ? `<button type="button" data-act="weapons">兵器を送る</button>` : ''}
+          ${!war && !t.capitulated ? `<button type="button" data-act="declare" class="danger">${sameSide(s, me.id, t.id) ? '裏切って宣戦布告' : '宣戦布告'}</button>` : ''}
           ${war ? `<button type="button" data-act="peaceDemand" class="hot">講和を迫る（相手が抜ける）</button><button type="button" data-act="peaceAsk">講和を求める（自国が抜ける）</button><button type="button" data-act="asat">衛星を攻撃</button>` : ''}
         </div></div>`;
     }
     const join = !me.engaged && s.wars.some(([a, b]) => a === me.camp || b === me.camp) ? `<button type="button" class="hot wide" data-act="join">参戦する</button>` : '';
     const goals = me.warGoal.length ? me.warGoal.map((n) => `<span class="tag">${W.nodes[n].name}</span>`).join('') : '<span class="muted">未設定。敵になりそうな国の拠点を選び、拠点パネルから加えます（参戦するまで）</span>';
     return `${join}
-      <h3>陣営</h3><p class="muted">${s.phase === 'tension' ? '陣営は関係値で自動的に決まります（関係+40以上で同じ陣営）。開戦で固定されます' : '陣営は固定されています。太字の国は参戦中'}</p>${campHtml}
+      <h3>陣営</h3><p class="muted">${s.phase === 'tension' ? '陣営は関係値で自動的に決まります（関係+40以上で同じ陣営）。開戦で固定されます' : '陣営は開戦で固定されますが、どの国も領土を広げるために宣戦・裏切りをします。太字の国は参戦中'}</p>${campHtml}
       <h3>主要国との関係</h3>${majors}${sel}
       <h3>戦争目的</h3><div class="chips">${goals}</div>
       ${s.phase === 'tension' ? `<h3>張り詰め度</h3>${W.regions.map((r, i) => ({ r, t: s.tension[i] })).filter((x) => x.t > 20).sort((a, b) => b.t - a.t).slice(0, 6).map((x) => `<div class="kv"><span>${x.r.name}</span><span class="bar"><i style="width:${x.t}%;background:${x.t > 75 ? CAMP_COLORS.enemy : '#B5B6B9'}"></i></span><b>${Math.round(x.t)}</b></div>`).join('')}<p class="muted">100に達した地域から戦争が始まります。緊張期が終わると、最も高い地域で必ず開戦します</p>` : ''}`;
@@ -514,6 +516,12 @@ export class UI {
       case 'peaceAsk': this.act(A.proposePeace(s, me, this.diploSel, 'ask')); break;
       case 'asat': this.act(A.asat(s, me, this.diploSel)); break;
       case 'join': this.act(A.declareJoin(s, me)); this.mark('join'); break;
+      case 'declare': case 'declareNode': {
+        const tgt = a === 'declare' ? this.diploSel : s.nodes[sel].ctrl; const T = C(s, tgt);
+        const betray = sameSide(s, me, tgt);
+        if (!confirm(betray ? `同じ陣営の${T.name}を裏切って宣戦しますか？\n陣営を抜け、元の同盟国すべてとの関係が大きく悪化し、世論も下がります。` : `${T.name}に宣戦布告しますか？\n世論が下がり、ほかの国との関係も少し悪化します。`)) break;
+        const r = A.declareWarOn(s, me, tgt); if (r.ok) { this.mark('join'); sfx.war(); } this.act(r); break;
+      }
       case 'borrow': this.act(A.borrow(s, me)); break;
       case 'repay': this.act(A.repay(s, me)); break;
       case 'warMode': this.act(A.toggleWarMode(s, me)); this.mark('budget'); break;

@@ -6,7 +6,7 @@ import {
   rand, sameSide, seaOK, side, sidesAtWar, supplyAt,
 } from './rules';
 import { newUnit } from './state';
-import { aiDaily, aiTension, aiWeekly, aiWarGoal } from './ai';
+import { aiDaily, aiExpand, aiTension, aiWeekly, aiWarGoal } from './ai';
 
 export const fx: StrikeFx[] = [];
 export const events: { kind: 'capture' | 'strike' | 'war' | 'alert'; t: number }[] = [];
@@ -34,7 +34,7 @@ export function step(s: GameState) {
     if (c.ai && !c.capitulated) { if (s.phase === 'tension') { if (s.day % 7 === 3) aiTension(s, c); } aiDaily(s, c); }
   }
   if (s.day % 7 === 0) {
-    for (const c of Object.values(s.countries)) if (c.ai && !c.capitulated) aiWeekly(s, c);
+    for (const c of Object.values(s.countries)) if (c.ai && !c.capitulated) { aiWeekly(s, c); aiExpand(s, c); }
     for (const c of Object.values(s.countries)) economy(s, c);
     peaceChecks(s);
   }
@@ -154,7 +154,9 @@ function outbreak(s: GameState, r: number): boolean {
 }
 export function campName(s: GameState, camp: number): string {
   const ms = s.majors.filter((m) => C(s, m).camp === camp).map((m) => C(s, m).name);
-  return ms.length ? ms.join('・') + '陣営' : '中小国陣営';
+  if (ms.length) return ms.join('・') + '陣営';
+  const mi = Object.values(s.countries).filter((c) => c.camp === camp).map((c) => c.name);
+  return mi.length ? mi.slice(0, 2).join('・') + '陣営' : '中小国陣営';
 }
 export function engage(s: GameState, id: string, announce = true) {
   const c = C(s, id);
@@ -163,6 +165,48 @@ export function engage(s: GameState, id: string, announce = true) {
   c.engaged = true; c.engagedDay = s.day;
   if (announce) news(s, `${c.name}が参戦しました`, mine(s, id) ? 'info' : 'warn');
   if (c.ai && c.major && !c.warGoal.length) aiWarGoal(s, c);
+}
+// ===================== 宣戦布告・裏切り =====================
+export function newCampId(s: GameState): number {
+  let m = -1; for (const c of Object.values(s.countries)) m = Math.max(m, c.camp); for (const [a, b] of s.wars) m = Math.max(m, a, b);
+  return m + 1;
+}
+// a が t に宣戦する。t が同じ陣営なら、a は陣営を抜けて裏切る
+export function declareWar(s: GameState, a: string, t: string): string | null {
+  const A = C(s, a), T = C(s, t);
+  if (a === t || A.capitulated || T.capitulated) return 'この国には宣戦できません';
+  if (atWar(s, a, t)) return 'すでに戦争中です';
+  if ((A.peace['_'] ?? 0) > s.day) return `講和したばかりのため、あと${(A.peace['_'] ?? 0) - s.day}日は宣戦できません`;
+  const betray = A.camp >= 0 && A.camp === T.camp;
+  if (betray || A.camp < 0) {
+    const old = A.camp; A.camp = newCampId(s);
+    if (betray) {
+      if (A.major) for (const m of s.majors) if (m !== a && C(s, m).camp === old) { s.rel[a][m] = Math.min(s.rel[a][m], -60); s.rel[m][a] = s.rel[a][m]; }
+      news(s, `【裏切り】${A.name}が陣営を離れ、同盟国の${T.name}に宣戦しました`, mine(s, t) || mine(s, a) ? 'bad' : 'warn');
+    }
+    // 自分に傾いた中小国はついてくる
+    for (const c of Object.values(s.countries)) if (!c.major && !c.engaged && (c.alignment[a] ?? 0) >= CFG.campJoin && Object.entries(c.alignment).every(([k, v]) => k === a || v <= (c.alignment[a] ?? 0))) c.camp = A.camp;
+  }
+  if (T.camp < 0) T.camp = newCampId(s);
+  if (!campsAtWar(s, A.camp, T.camp)) s.wars.push([A.camp, T.camp]);
+  s.phase = 'war'; s.campsLocked = true;
+  A.engaged = true; A.engagedDay = s.day; engage(s, t, false); T.engaged = true;
+  A.opinion -= betray ? 8 : 4;
+  if (A.major) for (const m of s.majors) if (m !== a && m !== t) { s.rel[m][a] = Math.max(-100, s.rel[m][a] - (betray ? 12 : 6)); s.rel[a][m] = s.rel[m][a]; }
+  if (A.major && T.major) { s.rel[a][t] = Math.min(s.rel[a][t], -50); s.rel[t][a] = s.rel[a][t]; }
+  if (!betray) news(s, `【宣戦】${A.name}が${T.name}に宣戦布告しました`, mine(s, t) ? 'bad' : mine(s, a) ? 'warn' : 'info');
+  // 裏切った瞬間：相手の拠点にいた自軍は、その場を押さえるか自国へ戻る
+  for (let n = 0; n < W.nodes.length; n++) {
+    const ns = s.nodes[n]; if (!atWar(s, a, ns.ctrl)) continue;
+    const here = s.units.filter((u) => u.node === n && (u.kind === 'land' || u.kind === 'ad') && !u.move);
+    const mineHere = here.filter((u) => u.owner === a), theirs = here.filter((u) => u.owner !== a && sameSide(s, u.owner, ns.ctrl));
+    if (mineHere.length && !theirs.length) { ns.ctrl = a; news(s, `${A.name}が${W.nodes[n].name}を奇襲で押さえました`, mine(s, a) ? 'good' : 'warn'); }
+    else for (const u of mineHere) { u.node = C(s, a).capital; u.order = 0; u.move = null; }
+  }
+  for (const u of s.units) if ((u.kind === 'land' || u.kind === 'ad') && u.node >= 0 && atWar(s, u.owner, s.nodes[u.node].ctrl)) { const home = (W.nodesByCountry[u.owner] ?? []).find((n) => s.nodes[n].ctrl === u.owner) ?? C(s, u.owner).capital; u.node = home; u.move = null; u.order = 0; }
+  events.push({ kind: 'war', t: performance.now() });
+  if (A.ai && A.major) aiWarGoal(s, A);
+  return null;
 }
 // 攻撃を受けた国（とその国に基地を置く主要国）を巻き込む
 function dragIn(s: GameState, attacker: string, target: string) {
@@ -677,6 +721,12 @@ export function endGame(s: GameState, defeat: boolean) {
   let own = 0, held = 0; for (const n of W.nodesByCountry[p] ?? []) { own += W.nodes[n].ind + 1; if (s.nodes[n].ctrl === p) held += W.nodes[n].ind + 1; }
   const survive = s.nodes[P.capital].ctrl === p && held / own >= 0.8;
   if (survive) achieved.push('生存・現状維持：首都と核心地域を守り抜きました');
+  const terr = (id: string) => { let v = 0; for (let n = 0; n < W.nodes.length; n++) if (s.nodes[n].ctrl === id) v += W.nodes[n].ind + 1; return v; };
+  const base0 = (id: string) => (W.nodesByCountry[id] ?? []).reduce((a, n) => a + W.nodes[n].ind + 1, 0) || 1;
+  const ranking = s.majors.map((m) => ({ m, r: terr(m) / base0(m) })).sort((a, b) => b.r - a.r);
+  const myRank = ranking.findIndex((x) => x.m === p) + 1;
+  if (myRank === 1 && ranking[0].r > 1.05) achieved.push(`領土拡大：主要国で最も領土を広げました（開始時の${Math.round(ranking[0].r * 100)}%）`);
+  notes.push(`領土：開始時の${Math.round(terr(p) / base0(p) * 100)}%（主要国8か国中${myRank}位）　1位 ${C(s, ranking[0].m).name} ${Math.round(ranking[0].r * 100)}%`);
   notes.push(`世論 ${Math.round(P.opinion)}／国債 GDP比 ${Math.round(P.debt / (P.gdpBase * 52) * 100)}%／戦争目的の達成度 ${Math.round(gp * 100)}%`);
   const rank = military ? 'S' : achieved.length >= 3 ? 'A' : achieved.length === 2 ? 'B' : achieved.length === 1 ? 'C' : 'D';
   s.result = { rank, achieved, notes, defeat: false };

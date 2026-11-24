@@ -2,7 +2,7 @@ import type { Facility, GameState, GenCat, Stock, UnitKind } from '../types';
 import { W, isAdj } from '../world';
 import { CFG } from '../config';
 import { C, atWar, campsAtWar, chance, enemyCampIdle, findPath, friendlyNode, hostileNode, landAt, adAt, sameSide, seaOK, side, hopDays } from './rules';
-import { addTension, capBudget, engage, exitWar, maxMil, news, peaceAccept, wName } from './sim';
+import { addTension, capBudget, declareWar, engage, exitWar, maxMil, news, peaceAccept, wName } from './sim';
 
 export type Res = { ok: boolean; msg: string };
 const ok = (msg = ''): Res => ({ ok: true, msg });
@@ -94,6 +94,10 @@ export function placeBase(s: GameState, id: string, target: string): Res {
   const r = W.nodes[t.capital].region; addTension(s, r, id, 5);
   news(s, `${c.name}が${t.name}に基地を置きました`, id === s.player ? 'info' : 'warn');
   return ok(`${t.name}に基地を置きました（寝返りを防ぎ、出撃拠点になります。張り詰め度+5）`);
+}
+export function declareWarOn(s: GameState, id: string, target: string): Res {
+  const err = declareWar(s, id, target); if (err) return ng(err);
+  return ok(`${C(s, target).name}に宣戦しました`);
 }
 export function declareJoin(s: GameState, id: string): Res {
   const c = C(s, id);
