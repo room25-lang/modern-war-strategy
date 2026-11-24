@@ -10,6 +10,7 @@ import * as A from './game/actions';
 import { MapView, type ViewState } from './render/map';
 import { UI } from './ui/ui';
 import { flagSVG } from './ui/flags';
+import { Tour } from './ui/tour';
 import { sfx } from './audio';
 
 const BASE = import.meta.env.BASE_URL;
@@ -23,7 +24,7 @@ async function boot() {
   document.getElementById('loading')!.remove();
   const canvas = document.getElementById('map') as HTMLCanvasElement;
   const view = new MapView(canvas, relief);
-  const v: ViewState = { mode: 'country', overlay: 'none', selected: null, drag: null, hover: null, targeting: null };
+  const v: ViewState = { mode: 'country', overlay: 'none', selected: null, drag: null, hover: null, targeting: null, cand: null };
   const host = {
     s: null as unknown as GameState, view, v, paused: true,
     setPaused(p: boolean) { host.paused = p; ui.top(); },
@@ -36,6 +37,7 @@ async function boot() {
   };
   const ui = new UI(host);
   ui.mount();
+  const tour = new Tour(ui); ui.tour = () => tour.start();
   (window as unknown as { __mws: unknown }).__mws = { host, ui, A };
 
   // ---------- 開始画面 ----------
@@ -82,9 +84,7 @@ async function boot() {
     const s = host.s;
     view.centerOn(C(s, s.player).capital, 1.1);
     ui.daily();
-    if (fresh) {
-      ui.tip('start', `緊張期です（最長${CFG.tensionWeeks}週）。この間に「外交」で中小国を味方に引き込み、部隊を国境へ動かし、敵になりそうな国の拠点を「戦争目的」に加えておきましょう。右上の再生ボタンかスペースキーで時間が進みます`);
-    }
+    if (fresh && !localStorage.getItem('mws_tour')) setTimeout(() => tour.start(), 300);
     host.paused = true; ui.top();
   }
 
@@ -109,14 +109,14 @@ async function boot() {
   canvas.addEventListener('pointerup', (e) => {
     if (!down) return;
     canvas.classList.remove('dragging');
-    const s = host.s;
     if (down.moved && v.drag) {
       const to = view.pick(e.clientX, e.clientY);
-      if (to !== null && to !== v.drag.from) ui.act(A.orderTo(s, s.player, v.drag.from, to));
+      if (to !== null && to !== v.drag.from) ui.order(v.drag.from, to);
       v.drag = null;
     } else if (!down.moved) {
       const n = view.pick(e.clientX, e.clientY);
       if (n !== null && ui.mapTarget(n)) { /* 目標を選んだ */ }
+      else if (n !== null && v.cand && (v.cand.attack.includes(n) || v.cand.move.includes(n))) { ui.order(v.cand.from, n); }
       else { v.selected = n; sfx.click(); ui.daily(); }
     }
     down = null;
@@ -132,7 +132,7 @@ async function boot() {
   document.getElementById('zout')!.onclick = () => { view.cam.z /= 1.4; view.clamp(); };
   window.addEventListener('resize', () => view.resize());
   window.addEventListener('keydown', (e) => {
-    if (!host.s || (e.target as HTMLElement).tagName === 'INPUT' || document.getElementById('modal')!.dataset.kind) return;
+    if (!host.s || (e.target as HTMLElement).tagName === 'INPUT' || document.getElementById('modal')!.dataset.kind || !document.getElementById('tour')!.classList.contains('hidden')) return;
     if (e.code === 'Space') { e.preventDefault(); host.setPaused(!host.paused); }
     if (e.code === 'Escape') { if (v.targeting) { v.targeting = null; ui.hint(null); } else if (ui.panel) ui.open(null); else v.selected = null; ui.daily(); }
   });
@@ -142,7 +142,7 @@ async function boot() {
   const loop = (t: number) => {
     const dt = Math.min(250, t - last); last = t;
     const s = host.s;
-    if (s && !host.paused && !s.over && !document.getElementById('modal')!.dataset.kind) {
+    if (s && !host.paused && !s.over && !document.getElementById('modal')!.dataset.kind && document.getElementById('tour')!.classList.contains('hidden')) {
       acc += dt * speed;
       let n = 0;
       while (acc >= CFG.dayMs && n < 20) { step(s); acc -= CFG.dayMs; n++; ui.daily(); }

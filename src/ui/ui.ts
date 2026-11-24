@@ -1,10 +1,10 @@
 import type { Facility, GameState, GenCat, Stock } from '../types';
-import { W, nodeKm } from '../world';
+import { W, isAdj, nodeKm } from '../world';
 import { CFG } from '../config';
 import { CAMP_COLORS, MAJORS } from '../data/countries';
 import * as A from '../game/actions';
 import {
-  C, adAt, airShare, atWar, campsAtWar, exhaustion, genLabel, goalProgress, hostileNode, landAt, sameSide, side, supplyAt, weekOf,
+  C, adAt, airShare, atWar, campsAtWar, exhaustion, genLabel, goalProgress, hostileNode, landAt, sameSide, seaOK, side, supplyAt, weekOf,
 } from '../game/rules';
 import { campName, exitWar, facName, genCatName, nearestOwnKm, wName } from '../game/sim';
 import type { MapView, ViewState } from '../render/map';
@@ -30,6 +30,7 @@ export class UI {
   cyberSel = { target: '', effect: 'gdp' as 'gdp' | 'sat' | 'ad' };
   weekSnap = { debt: 0, opinion: 0, missile: 0, ad: 0, week: -1 };
   newsSeen = 0;
+  tour: () => void = () => {};
 
   constructor(h: Host) { this.h = h; }
   get s() { return this.h.s; }
@@ -41,7 +42,7 @@ export class UI {
       ['diplo', '外交', 'M3 9 L10 4 L17 9 M5 9 V15 M10 9 V15 M15 9 V15 M3 16 H17'],
       ['budget', '予算', 'M10 3 a7 7 0 1 0 0.01 0 M10 3 V10 L15 14'],
       ['prod', '生産', 'M2 17 V9 L7 12 V9 L12 12 V5 H17 V17 Z'],
-      ['land', '陸', 'M3 13 H17 V16 H3 Z M5 13 V10 H13 V13 M9 10 L16 7'],
+      ['land', '部隊', 'M3 5 H17 V15 H3 Z M3 5 L17 15 M17 5 L3 15'],
       ['sea', '海', 'M2 12 H18 L15 16 H5 Z M7 12 V8 H12 V12 M9.5 8 V4'],
       ['air', '空', 'M10 2 L11.5 8 L18 11 V12.5 L11.5 11 L11 15 L13 16.5 V18 L10 17 L7 18 V16.5 L9 15 L8.5 11 L2 12.5 V11 L8.5 8 Z'],
       ['strike', '打撃', 'M10 3.5 a6.5 6.5 0 1 0 0.01 0 M10 1.5 V5 M10 15 V18.5 M1.5 10 H5 M15 10 H18.5'],
@@ -64,6 +65,26 @@ export class UI {
     });
   }
 
+  mark(k: string) { if (!this.s.tips.includes(k)) this.s.tips.push(k); }
+  // 選んだ拠点から行ける先
+  updateCand() {
+    const s = this.s, v = this.h.v, n = v.selected, me = s.player;
+    v.cand = null;
+    if (n === null || !sameSide(s, s.nodes[n].ctrl, me)) return;
+    if (!s.units.some((u) => u.node === n && u.owner === me && !u.move && (u.kind === 'land' || u.kind === 'ad') && !u.order)) return;
+    const attack: number[] = [], move: number[] = [];
+    const eng = C(s, me).engaged; const sd = side(s, me);
+    for (const e of W.adj[n]) { if (sameSide(s, s.nodes[e.to].ctrl, me)) move.push(e.to); else if (eng && hostileNode(s, me, e.to)) attack.push(e.to); }
+    if (W.nodes[n].port && s.nodes[n].health.port >= 30) for (const z of W.nodes[n].zones) {
+      if (!seaOK(s, z, sd)) continue;
+      for (const zz of [z]) for (const p of W.portsByZone[zz]) {
+        if (p === n || isAdj(n, p) || attack.includes(p) || move.includes(p)) continue;
+        if (sameSide(s, s.nodes[p].ctrl, me)) { if (zz === z) move.push(p); } else if (eng && hostileNode(s, me, p)) attack.push(p);
+      }
+    }
+    v.cand = { from: n, attack, move };
+  }
+
   // ---------- 毎フレーム・毎日の更新 ----------
   frame() { drawMinimap($('#mini canvas') as HTMLCanvasElement, this.h.view); }
   daily() {
@@ -72,7 +93,7 @@ export class UI {
       const me = this.me;
       this.weekSnap = { debt: this.debtRatio(), opinion: me.opinion, missile: this.missilePct(), ad: this.adPct(), week: weekOf(s) };
     }
-    this.top(); this.legend(); this.nodePanel(); this.strikeBar(); this.renderPanel(); this.flushNews(); this.checkModals();
+    this.updateCand(); this.top(); this.legend(); this.nodePanel(); this.strikeBar(); this.renderPanel(); this.todo(); this.flushNews(); this.checkModals();
     const tb = document.querySelectorAll('#tools button');
     tb.forEach((b) => { const t = (b as HTMLElement).dataset.tool; b.classList.toggle('on', (t === 'mode' && this.h.v.mode === 'camp') || t === this.h.v.overlay); });
   }
@@ -150,13 +171,59 @@ export class UI {
         ${stat('制空', `${pct(airShare(s, wn.region, psd) * 100)}<small>${W.regions[wn.region].name}</small>`)}
         ${stat(friendly ? '港・基地' : '索敵', friendly ? (`${wn.port ? '港' + Math.round(ns.health.port) + '% ' : ''}${wn.airbase ? '基地' + Math.round(ns.health.airbase) + '%' : ''}`.trim() || '—') : (s.seen[n] ? `${s.day - s.seen[n].day}日前` : 'なし'))}
       </div>
+      ${friendly ? this.unitList(n) : ''}
       <div class="acts">
-        ${friendly ? `<button type="button" data-act="target" data-arg="attack" class="hot">攻勢・移動</button><button type="button" data-act="reinforceAD">防空強化</button>` : ''}
+        ${friendly ? `<button type="button" data-act="reinforceAD">防空強化</button>` : ''}
         ${hostile ? `<button type="button" data-act="strikeAt" class="hot">打撃</button>` : ''}
         ${canGoal ? `<button type="button" data-act="goal">${goal ? '戦争目的から外す' : '戦争目的に加える'}</button>` : ''}
         ${!friendly ? `<button type="button" data-act="droneHere">偵察を向ける</button>` : ''}
         ${!ctrl.major && !friendly && !hostile ? `<button type="button" data-act="diploOpen" data-arg="${ctrl.id}">外交</button>` : ''}
       </div>`;
+  }
+
+  unitList(n: number): string {
+    const s = this.s, me = s.player;
+    const us = s.units.filter((u) => u.node === n && (u.kind === 'land' || u.kind === 'ad')).sort((a, b) => (a.owner === me ? -1 : 1) - (b.owner === me ? -1 : 1));
+    if (!us.length) return '<p class="hintline">この拠点に部隊はいません</p>';
+    const rows = us.slice(0, 6).map((u) => {
+      const st = u.move ? `移動中 → ${W.nodes[u.move.path.at(-1)!].name}` : u.order ? `攻勢中 → ${W.nodes[s.orders.find((o) => o.id === u.order)?.to ?? n].name}` : '待機';
+      const col = u.strength > 66 ? '#9CCB8E' : u.strength > 33 ? '#E8B36A' : '#E0606A';
+      return `<div class="urow ${u.owner === me ? 'mine' : ''}"><span class="ui">${u.kind === 'land' ? '師団' : '防空'}</span><span class="uo">${C(s, u.owner).name}</span><span class="bar"><i style="width:${u.strength}%;background:${col}"></i></span><b>${Math.round(u.strength)}%</b><span class="us">${st}</span></div>`;
+    }).join('');
+    const mineHere = us.some((u) => u.owner === me && !u.move && !u.order);
+    return `<div class="ulist">${rows}${us.length > 6 ? `<p class="muted">ほか${us.length - 6}部隊</p>` : ''}</div>${mineHere ? '<p class="hintline"><b class="r">赤い輪</b>の拠点を押すと攻撃、<b>白い点線の輪</b>を押すと移動（ドラッグでも可）</p>' : ''}`;
+  }
+
+  // ---------- やることリスト ----------
+  todo() {
+    const s = this.s, me = this.me, el = $('#todo');
+    if (this.panel || !s || s.over) { el.classList.add('hidden'); return; }
+    const done = (k: string) => s.tips.includes(k);
+    type T = [string, string, boolean, string];
+    const items: T[] = [];
+    const campWar = s.wars.some(([a, b]) => a === me.camp || b === me.camp);
+    if (s.phase === 'tension') {
+      items.push(['time', '時間を進める（スペースキー／右上の▶）', s.day > 0, 'pause']);
+      items.push(['goal', '戦争目的を決める：敵になりそうな国の拠点を押して「戦争目的に加える」', me.warGoal.length > 0, 'hint:goal']);
+      items.push(['aid', '中小国に援助して味方に引き込む（外交）', done('aid'), 'panel:diplo']);
+      items.push(['move', '部隊を国境の拠点へ動かす（自分の駒を押して白い輪へ）', done('move'), 'hint:move']);
+      items.push(['prod', '師団か防空大隊を生産する（生産）', done('prod'), 'panel:prod']);
+      items.push(['budget', '予算の配分を見直す（予算）', done('budget'), 'panel:budget']);
+    } else {
+      if (campWar && !me.engaged) items.push(['join', 'あなたの陣営が戦争中です。参戦する（外交）', false, 'panel:diplo']);
+      items.push(['budget', '戦時に合わせて軍の予算を増やす（予算）', done('budget'), 'panel:budget']);
+      if (me.engaged) {
+        items.push(['recon', '偵察衛星・ドローンを前線へ向ける（索敵）', done('recon'), 'panel:recon']);
+        items.push(['strike', '敵の防空陣地を打撃する（打撃）', done('strike'), 'panel:strike']);
+        items.push(['attack', '前線の敵拠点へ攻勢をかける（駒を押して赤い輪へ）', done('attack'), 'hint:move']);
+        items.push(['seaair', '艦隊と航空隊を前線へ割り当てる（海・空）', done('seaair'), 'panel:air']);
+        items.push(['peace', '世論・在庫が苦しくなったら講和を考える（外交）', me.opinion > 45, 'panel:diplo']);
+      }
+    }
+    const open = items.filter((i) => !i[2]).slice(0, 4);
+    const total = items.length, fin = items.filter((i) => i[2]).length;
+    el.classList.toggle('hidden', !open.length);
+    el.innerHTML = `<div class="th"><b>${s.phase === 'tension' ? '緊張期にやること' : '戦時にやること'}</b><span>${fin}/${total}</span></div>${open.map((i) => `<button type="button" class="ti" data-todo="${i[3]}"><span class="box"></span>${i[1]}</button>`).join('')}`;
   }
 
   // ---------- 打撃予定 ----------
@@ -181,7 +248,7 @@ export class UI {
     if (el.contains(document.activeElement) && (document.activeElement as HTMLElement).tagName.match(/INPUT|SELECT/)) return;
     el.classList.remove('hidden');
     const body = ({ diplo: () => this.pDiplo(), budget: () => this.pBudget(), prod: () => this.pProd(), land: () => this.pLand(), sea: () => this.pSea(), air: () => this.pAir(), strike: () => this.pStrike(), recon: () => this.pRecon(), cyber: () => this.pCyber(), news: () => this.pNews() } as Record<string, () => string>)[this.panel]();
-    const title = ({ diplo: '外交', budget: '予算', prod: '生産', land: '陸軍', sea: '海軍', air: '空軍', strike: '打撃', recon: '索敵', cyber: 'サイバー', news: 'ニュース' } as Record<string, string>)[this.panel];
+    const title = ({ diplo: '外交', budget: '予算', prod: '生産', land: '部隊一覧', sea: '海軍', air: '空軍', strike: '打撃', recon: '索敵', cyber: 'サイバー', news: 'ニュース' } as Record<string, string>)[this.panel];
     el.innerHTML = `<div class="ph"><h2>${title}</h2><button type="button" class="x" data-act="closePanel" aria-label="閉じる">✕</button></div><div class="pb">${body}</div>`;
   }
 
@@ -248,13 +315,21 @@ export class UI {
   pLand(): string {
     const s = this.s, me = this.me;
     const orders = s.orders.filter((o) => o.owner === me.id).map((o) => `<div class="kv"><span>${W.nodes[o.from].name} → ${W.nodes[o.to].name}${o.amphib ? '（上陸）' : ''}</span><span class="bar"><i style="width:${Math.min(100, o.progress)}%;background:#E8806F"></i></span><button type="button" class="x" data-act="cancelOrder" data-arg="${o.id}" aria-label="取りやめる">✕</button></div>`).join('') || '<p class="muted">攻勢なし</p>';
-    const by = new Map<number, number[]>();
-    for (const u of s.units) if (u.owner === me.id && u.kind === 'land') { const k = u.move ? -1 : u.node; (by.get(k) ?? by.set(k, []).get(k)!).push(u.strength); }
-    const list = [...by.entries()].filter(([k]) => k >= 0).sort((a, b) => b[1].length - a[1].length).map(([n, st]) => `<button type="button" class="relrow" data-act="goto" data-arg="${n}"><span>${W.nodes[n].name}</span><span class="muted">${st.length}個師団</span><b>${Math.round(st.reduce((a, b) => a + b, 0) / st.length)}%</b></button>`).join('');
-    const moving = by.get(-1)?.length ?? 0;
-    return `<p class="muted">地図で自分の拠点から隣の敵の拠点へドラッグすると攻勢、味方の拠点へドラッグすると移動です。海を挟んだ港どうしは、制海があれば上陸作戦になります</p>
-      <div class="kv"><span>ドクトリン</span><b>${me.doctrine.land === 'mobile' ? '機動打撃（攻め+20%）' : '縦深防御（守り+25%）'}</b></div>
-      <h3>攻勢</h3>${orders}<h3>師団の配置${moving ? `（移動中 ${moving}）` : ''}</h3>${list}`;
+    const by = new Map<number, { land: number[]; ad: number; busy: boolean }>();
+    let moving = 0;
+    for (const u of s.units) if (u.owner === me.id && (u.kind === 'land' || u.kind === 'ad')) {
+      if (u.move) { moving++; continue; }
+      const e = by.get(u.node) ?? { land: [], ad: 0, busy: false }; if (u.kind === 'land') e.land.push(u.strength); else e.ad++; if (u.order) e.busy = true; by.set(u.node, e);
+    }
+    const front = (n: number) => W.adj[n].some((e) => atWar(s, me.id, s.nodes[e.to].ctrl));
+    const list = [...by.entries()].sort((a, b) => Number(front(b[0])) - Number(front(a[0])) || b[1].land.length - a[1].land.length).map(([n, e]) => `<button type="button" class="relrow" data-act="goto" data-arg="${n}"><span>${W.nodes[n].name}${front(n) ? ' <small class="down">前線</small>' : ''}${e.busy ? ' <small class="warn">攻勢中</small>' : ''}</span><span class="muted">師団${e.land.length}・防空${e.ad}</span><b>${e.land.length ? Math.round(e.land.reduce((a, b) => a + b, 0) / e.land.length) + '%' : '—'}</b></button>`).join('');
+    const fl = s.units.filter((u) => u.owner === me.id && u.kind === 'fleet').map((u, i) => `<button type="button" class="relrow" data-act="gozone" data-arg="${u.zone}"><span>艦隊${i + 1}</span><span class="muted">${W.zones[u.zone].name}${u.transit ? '（移動中）' : ''}</span><b>${Math.round(u.strength)}%</b></button>`).join('') || '<p class="muted">なし</p>';
+    const air = s.units.filter((u) => u.owner === me.id && u.kind === 'air').map((u, i) => `<button type="button" class="relrow" data-act="goregion" data-arg="${u.region}"><span>航空隊${i + 1}</span><span class="muted">${W.regions[u.region].name}${u.transit ? '（移動中）' : ''}</span><b>${Math.round(u.strength)}%</b></button>`).join('') || '<p class="muted">なし</p>';
+    return `<p class="muted">押すとその場所へ移動します。地図で自分の駒がいる拠点を押すと、行ける先が輪で光ります（白い点線＝移動、赤＝攻撃）</p>
+      <h3>攻勢</h3>${orders}
+      <h3>陸の部隊（拠点ごと）${moving ? `<small class="muted">　移動中 ${moving}</small>` : ''}</h3>${list}
+      <h3>艦隊 <small class="muted">担当の変更は「海」</small></h3>${fl}
+      <h3>航空隊 <small class="muted">担当の変更は「空」</small></h3>${air}`;
   }
   pSea(): string {
     const s = this.s, me = this.me, sd = side(s, me.id);
@@ -373,7 +448,7 @@ export class UI {
   }
   settingsModal() {
     const slot = (i: number) => { const raw = localStorage.getItem('mws_save_' + i); let info = '空き'; if (raw) { try { const j = JSON.parse(raw); info = `${C(j, j.player)?.name ?? ''} 第${Math.floor(j.day / 7) + 1}週`; } catch { info = '読めません'; } } return `<div class="kv"><span>スロット${i}：${info}</span><button type="button" data-act="save" data-arg="${i}">保存</button><button type="button" data-act="load" data-arg="${i}" ${raw ? '' : 'disabled'}>読み込む</button></div>`; };
-    this.modal('settings', `<h2>設定</h2>${[1, 2, 3].map(slot).join('')}<div class="acts"><button type="button" data-act="sound">効果音：${sound.on ? 'オン' : 'オフ'}</button><button type="button" data-act="restart">最初から</button><button type="button" class="hot" data-act="closeModal">閉じる</button></div><p class="muted">地図データ：Natural Earth（パブリックドメイン）</p>`);
+    this.modal('settings', `<h2>設定</h2>${[1, 2, 3].map(slot).join('')}<div class="acts"><button type="button" data-act="tour">チュートリアル</button><button type="button" data-act="sound">効果音：${sound.on ? 'オン' : 'オフ'}</button><button type="button" data-act="restart">最初から</button><button type="button" class="hot" data-act="closeModal">閉じる</button></div><p class="muted">地図データ：Natural Earth（パブリックドメイン）</p>`);
   }
 
   // ---------- 入力 ----------
@@ -383,6 +458,14 @@ export class UI {
     if (!t) return;
     const s = this.s, me = s.player, sel = this.h.v.selected ?? -1;
     if (t.dataset.panel) { sfx.click(); this.open(t.dataset.panel as Panel); return; }
+    if (t.dataset.todo) {
+      sfx.click(); const [k, v2] = t.dataset.todo.split(':');
+      if (k === 'panel') this.open(v2 as Panel);
+      else if (k === 'pause') this.h.setPaused(false);
+      else if (v2 === 'goal') this.toast('敵になりそうな国の拠点を押し、左下のパネルの「戦争目的に加える」を押します', 'info');
+      else { this.h.v.selected = this.me.capital; this.h.view.centerOn(this.me.capital, 1.4); this.toast('自分の駒がいる拠点を押すと、行ける先が輪で光ります。白い点線は移動、赤は攻撃です', 'info'); }
+      this.daily(); return;
+    }
     if (t.dataset.tool) {
       sfx.click(); const k = t.dataset.tool;
       if (k === 'mode') this.h.v.mode = this.h.v.mode === 'country' ? 'camp' : 'country';
@@ -404,30 +487,32 @@ export class UI {
       case 'reinforceAD': this.act(A.reinforceAD(s, me, sel)); break;
       case 'strikeAt': this.draft.target = sel; this.panel = null; this.open('strike'); break;
       case 'goal': this.act(A.toggleGoal(s, me, sel)); break;
-      case 'droneHere': { const c = C(s, me); if (!c.droneAssign.length) { this.toast('偵察ドローン隊がありません', 'warn'); break; } c.droneAssign[0] = W.nodes[sel].region; this.toast(`偵察ドローン隊1を${W.regions[W.nodes[sel].region].name}へ向けました`, 'good'); break; }
+      case 'droneHere': { const c = C(s, me); if (!c.droneAssign.length) { this.toast('偵察ドローン隊がありません', 'warn'); break; } c.droneAssign[0] = W.nodes[sel].region; this.mark('recon'); this.toast(`偵察ドローン隊1を${W.regions[W.nodes[sel].region].name}へ向けました`, 'good'); break; }
       case 'diploOpen': this.diploSel = arg; this.panel = null; this.open('diplo'); break;
       case 'cancelStrike': this.act(A.cancelStrike(s, me, Number(arg))); break;
       case 'dsel': this.diploSel = arg; this.renderPanel(); break;
       case 'summit': this.act(A.summit(s, me, this.diploSel)); break;
-      case 'aid': this.act(A.aid(s, me, this.diploSel)); break;
-      case 'base': this.act(A.placeBase(s, me, this.diploSel)); break;
+      case 'aid': this.act(A.aid(s, me, this.diploSel)); this.mark('aid'); break;
+      case 'base': this.act(A.placeBase(s, me, this.diploSel)); this.mark('aid'); break;
       case 'weapons': this.act(A.sendWeapons(s, me, this.diploSel)); break;
       case 'peaceDemand': this.act(A.proposePeace(s, me, this.diploSel, 'demand')); break;
       case 'peaceAsk': this.act(A.proposePeace(s, me, this.diploSel, 'ask')); break;
       case 'asat': this.act(A.asat(s, me, this.diploSel)); break;
-      case 'join': this.act(A.declareJoin(s, me)); break;
+      case 'join': this.act(A.declareJoin(s, me)); this.mark('join'); break;
       case 'borrow': this.act(A.borrow(s, me)); break;
       case 'repay': this.act(A.repay(s, me)); break;
-      case 'warMode': this.act(A.toggleWarMode(s, me)); break;
-      case 'enqueue': this.act(A.enqueue(s, me, arg as 'land')); break;
+      case 'warMode': this.act(A.toggleWarMode(s, me)); this.mark('budget'); break;
+      case 'enqueue': this.act(A.enqueue(s, me, arg as 'land')); this.mark('prod'); break;
       case 'dequeue': this.act(A.dequeue(s, me, Number(arg))); break;
-      case 'mobilize': this.act(A.mobilize(s, me)); break;
+      case 'mobilize': this.act(A.mobilize(s, me)); this.mark('prod'); break;
       case 'gen': this.act(A.startGen(s, me, arg as GenCat)); break;
       case 'cancelOrder': this.act(A.cancelOrder(s, me, Number(arg))); break;
-      case 'goto': this.h.v.selected = Number(arg); this.h.view.centerOn(Number(arg)); break;
+      case 'goto': this.h.v.selected = Number(arg); this.h.view.centerOn(Number(arg), Math.max(1.3, this.h.view.cam.z)); break;
+      case 'gozone': { const z = W.zones[Number(arg)]; this.h.view.cam.x = z.x; this.h.view.cam.y = z.y; this.h.view.clamp(); this.h.v.overlay = 'sea'; break; }
+      case 'goregion': { const r = W.regions[Number(arg)]; this.h.view.cam.x = r.x; this.h.view.cam.y = r.y; this.h.view.clamp(); this.h.v.overlay = 'air'; break; }
       case 'fac': this.draft.facility = arg as Facility; this.renderPanel(); break;
       case 'tprev': case 'tnext': { const d = this.draft; let h = d.day * 24 + d.hour + (a === 'tnext' ? 3 : -3); h = Math.max(24, Math.min(7 * 24 + 21, h)); d.day = Math.floor(h / 24); d.hour = h % 24; this.renderPanel(); break; }
-      case 'doStrike': { const d = this.draft; const r = A.scheduleStrike(s, me, d.target, d.facility, d.n, d.day, d.hour); if (r.ok) { sfx.launch(); d.n = { cruise: 0, ballistic: 0, drone: 0, interceptor: 0 }; this.tip('strike', '打撃は予約した日の時刻に実行されます。結果はニュースに出ます。迎撃弾が尽きた相手には、ミサイルがほとんど命中します'); } this.act(r); break; }
+      case 'doStrike': { const d = this.draft; const r = A.scheduleStrike(s, me, d.target, d.facility, d.n, d.day, d.hour); if (r.ok) { this.mark('strike'); sfx.launch(); d.n = { cruise: 0, ballistic: 0, drone: 0, interceptor: 0 }; this.tip('strike', '打撃は予約した日の時刻に実行されます。結果はニュースに出ます。迎撃弾が尽きた相手には、ミサイルがほとんど命中します'); } this.act(r); break; }
       case 'cyeff': this.cyberSel.effect = arg as 'gdp'; this.renderPanel(); break;
       case 'doCyber': this.act(A.cyber(s, me, this.cyberSel.target, this.cyberSel.effect)); break;
       case 'forcedOk': { const foe = Object.values(s.countries).find((c) => atWar(s, me, c.id)); if (foe) A.proposePeace(s, me, foe.id, 'ask'); s.forcedPeace = false; this.closeModal(); break; }
@@ -436,6 +521,7 @@ export class UI {
       case 'save': this.h.save(Number(arg)); this.settingsModal(); this.toast(`スロット${arg}に保存しました`, 'good'); break;
       case 'load': if (this.h.load(Number(arg))) { this.closeModal(); this.toast('読み込みました', 'good'); } break;
       case 'sound': toggleSound(); this.settingsModal(); break;
+      case 'tour': this.closeModal(); this.tour(); break;
       case 'restart': this.closeModal(); this.h.restart(); break;
     }
     this.daily();
@@ -446,7 +532,7 @@ export class UI {
       const c = C(s, me); const k = d.budget as 'mil' | 'ind' | 'pop'; const v = Number(t.value);
       const others = (['mil', 'ind', 'pop'] as const).filter((x) => x !== k); const rest = 100 - v; const os = others.reduce((a, x) => a + c.budget[x], 0) || 1;
       const nb = { ...c.budget, [k]: v } as typeof c.budget; for (const x of others) nb[x] = rest * c.budget[x] / os;
-      A.setBudget(s, me, nb.mil, nb.ind, nb.pop);
+      A.setBudget(s, me, nb.mil, nb.ind, nb.pop); this.mark('budget');
       if (e.type === 'change') { (document.activeElement as HTMLElement)?.blur(); this.renderPanel(); } this.top();
     } else if (d.wn) {
       const max = Math.floor(this.me.stock[d.wn as 'cruise']); const v = Math.max(0, Math.min(max, Math.round(Number(t.value) || 0)));
@@ -455,26 +541,30 @@ export class UI {
       if (e.type === 'change') { (t as HTMLElement).blur(); this.renderPanel(); }
     }
     else if (e.type !== 'change') return;
-    else if (d.fleet) this.act(A.assignFleet(s, me, Number(d.fleet), Number(t.value)));
-    else if (d.wing) this.act(A.assignAir(s, me, Number(d.wing), Number(t.value)));
-    else if (d.sat) this.act(A.assignSat(s, me, Number(d.sat), Number(t.value)));
-    else if (d.drone) this.act(A.assignDrone(s, me, Number(d.drone), Number(t.value)));
+    else if (d.fleet) { this.mark('seaair'); this.act(A.assignFleet(s, me, Number(d.fleet), Number(t.value))); }
+    else if (d.wing) { this.mark('seaair'); this.act(A.assignAir(s, me, Number(d.wing), Number(t.value))); }
+    else if (d.sat) { this.mark('recon'); this.act(A.assignSat(s, me, Number(d.sat), Number(t.value))); }
+    else if (d.drone) { this.mark('recon'); this.act(A.assignDrone(s, me, Number(d.drone), Number(t.value))); }
     else if ('sday' in d) this.draft.day = Number(t.value);
     else if ('shour' in d) this.draft.hour = Number(t.value);
     else if ('cyt' in d) this.cyberSel.target = t.value;
     (t as HTMLElement).blur?.();
+  }
+  order(from: number, to: number) {
+    const s = this.s; const friendly = sameSide(s, s.nodes[to].ctrl, s.player);
+    const r = A.orderTo(s, s.player, from, to);
+    if (r.ok) { this.mark(friendly ? 'move' : 'attack'); if (!friendly) this.tip('attack', '攻勢は毎日判定されます。索敵→制空→打撃→地上戦の順に強さが決まり、矢印の点線が進み具合です。補給が切れた部隊は弱ります'); }
+    this.act(r); return r.ok;
   }
   hint(text: string | null) { const h = $('#hint'); h.textContent = text ?? ''; h.classList.toggle('hidden', !text); }
 
   // 地図から：targeting
   mapTarget(n: number) {
     const tg = this.h.v.targeting; if (!tg) return false;
-    const s = this.s;
     if (tg.kind === 'strike') { this.draft.target = n; this.panel = 'strike'; this.renderPanel(); }
-    else if (tg.kind === 'attack' && tg.from !== undefined && tg.from >= 0) { const r = A.orderTo(s, s.player, tg.from, n); this.act(r); if (r.ok && !friendlyLand(s, n)) this.tip('attack', '攻勢は毎日判定されます。索敵→制空→打撃→地上戦の順に強さが決まり、矢印の点線が進み具合です。補給が切れた部隊は弱ります'); }
+    else if (tg.kind === 'attack' && tg.from !== undefined && tg.from >= 0) this.order(tg.from, n);
     this.h.v.targeting = null; this.hint(null);
     return true;
   }
 }
-function friendlyLand(s: GameState, n: number) { return sameSide(s, s.nodes[n].ctrl, s.player); }
 export { landAt, nodeKm };

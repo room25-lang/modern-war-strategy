@@ -11,6 +11,7 @@ export interface ViewState {
   drag: { from: number; x: number; y: number } | null;
   hover: number | null;
   targeting: null | { kind: 'attack' | 'strike' | 'goal'; from?: number };
+  cand: { from: number; attack: number[]; move: number[] } | null;
 }
 
 const OCEAN = '#3B4B5C';
@@ -237,6 +238,12 @@ export class MapView {
       const [x, y] = this.toScreen(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
       g.fillStyle = u.owner === s.player ? '#F2F2F2' : '#A9C7EC'; g.beginPath(); g.arc(x, y, 3.5, 0, 7); g.fill();
     }
+    // 行ける先（部隊を選んだとき）
+    if (v.cand) {
+      const pulse = 1 + Math.sin(now / 250) * 0.12;
+      for (const n of v.cand.attack) { const [x, y] = this.toScreen(W.nodes[n].x, W.nodes[n].y); g.strokeStyle = '#E8806F'; g.lineWidth = 3; g.beginPath(); g.arc(x, y, 15 * pulse, 0, 7); g.stroke(); this.label('攻撃', x - 13, y - 24, 12, true); }
+      for (const n of v.cand.move) { const [x, y] = this.toScreen(W.nodes[n].x, W.nodes[n].y); g.strokeStyle = 'rgba(242,242,242,0.9)'; g.lineWidth = 2; g.setLineDash([4, 3]); g.beginPath(); g.arc(x, y, 13, 0, 7); g.stroke(); g.setLineDash([]); }
+    }
     // 拠点
     const P = C(s, s.player);
     for (const n of W.nodes) {
@@ -256,7 +263,7 @@ export class MapView {
       const [x, y] = this.toScreen(n.x, n.y); if (!this.onScreen(x, y)) continue;
       const showName = n.capital ? z > 0.45 : n.ind >= 3 ? z > 0.9 : z > 1.5;
       if (showName) this.label(n.name, x + 9, y, n.capital ? 15 : 13, true);
-      if (z > 0.55) this.chips(s, n.id, x + 2, y + 12);
+      this.chips(s, n.id, x, y + 11);
     }
     if (v.overlay === 'sea' || z > 0.8) this.fleetChips(s);
     this.drawFx(now);
@@ -309,23 +316,51 @@ export class MapView {
     else { g.strokeStyle = 'rgba(255,255,255,0.28)'; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.fillStyle = bar; g.fillRect(x + 1, y + 1, 5, h - 2); }
     g.fillStyle = '#F2F2F2'; g.fillText(text, x + (dashed ? 7 : 11), y + h / 2 + 0.5); return w;
   }
+  // 部隊の駒（国旗の色・兵種・数・強さ）
+  counter(x: number, y: number, o: { kind: 'land' | 'ad'; n: string; str: number; color: string; style: 'me' | 'ally' | 'enemy' | 'unknown'; busy?: boolean }): number {
+    const g = this.ctx; const k = this.cam.z < 1.5 ? 0.8 : 1;
+    g.save(); g.translate(x, y); g.scale(k, k); x = 0; y = 0;
+    const r = this.counterBody(g, x, y, o); g.restore(); return r * k;
+  }
+  counterBody(g: CanvasRenderingContext2D, x: number, y: number, o: { kind: 'land' | 'ad'; n: string; str: number; color: string; style: 'me' | 'ally' | 'enemy' | 'unknown'; busy?: boolean }): number {
+    const w = 50, h = 30;
+    const border = o.style === 'me' ? '#F2F2F2' : o.style === 'ally' ? '#8DB0DA' : o.style === 'enemy' ? '#E0606A' : '#B5B6B9';
+    g.fillStyle = o.style === 'enemy' ? 'rgba(58,26,30,0.95)' : 'rgba(24,25,27,0.95)'; g.fillRect(x, y, w, h);
+    if (o.style === 'unknown') { g.setLineDash([4, 3]); g.strokeStyle = border; g.lineWidth = 1.5; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.setLineDash([]); }
+    else { g.fillStyle = o.color; g.fillRect(x, y, w, 4); g.strokeStyle = border; g.lineWidth = o.style === 'me' ? 2 : 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); }
+    // 兵種の記号（陸＝四角に×、防空＝半円）
+    g.strokeStyle = '#E6E6E6'; g.lineWidth = 1.3; const ix = x + 5, iy = y + 9;
+    if (o.kind === 'land') { g.strokeRect(ix, iy, 16, 11); g.beginPath(); g.moveTo(ix, iy); g.lineTo(ix + 16, iy + 11); g.moveTo(ix + 16, iy); g.lineTo(ix, iy + 11); g.stroke(); }
+    else { g.strokeRect(ix, iy, 16, 11); g.beginPath(); g.arc(ix + 8, iy + 11, 6, Math.PI, 0); g.stroke(); }
+    g.font = `700 14px 'Noto Sans JP', sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#F2F2F2';
+    g.fillText(o.n, x + 36, y + 15); g.textAlign = 'left';
+    if (o.style !== 'unknown') {
+      g.fillStyle = '#3A3B3F'; g.fillRect(x + 4, y + h - 5, w - 8, 3);
+      g.fillStyle = o.str > 66 ? '#9CCB8E' : o.str > 33 ? '#E8B36A' : '#E0606A'; g.fillRect(x + 4, y + h - 5, (w - 8) * Math.max(0, Math.min(1, o.str / 100)), 3);
+    }
+    if (o.busy) { g.fillStyle = '#E8806F'; g.beginPath(); g.moveTo(x + w - 9, y + 6); g.lineTo(x + w - 3, y + 10); g.lineTo(x + w - 9, y + 14); g.closePath(); g.fill(); }
+    return w;
+  }
   chips(s: GameState, n: number, x: number, y: number) {
-    const ns = s.nodes[n]; const p = s.player;
+    const ns = s.nodes[n]; const p = s.player; const z = this.cam.z;
     const units = s.units.filter((u) => u.node === n && !u.move && (u.kind === 'land' || u.kind === 'ad'));
-    let cx = x - 10;
+    let cx = x - 25;
     if (sameSide(s, ns.ctrl, p)) {
-      const by = new Map<string, { land: number; ad: number }>();
-      for (const u of units) { const e = by.get(u.owner) ?? { land: 0, ad: 0 }; if (u.kind === 'land') e.land++; else e.ad++; by.set(u.owner, e); }
-      for (const [o, e] of by) {
-        if (o !== p && this.cam.z < 1.3) continue;
-        const t = [e.land ? `陸${e.land}` : '', e.ad ? `防${e.ad}` : ''].filter(Boolean).join(' ');
-        cx += this.chip(cx, y, o === p ? '#9CCB8E' : CAMP_COLORS.ally, `${o === p ? '' : C(s, o).name.slice(0, 2) + ' '}${t}`) + 3;
+      const by = new Map<string, { land: number[]; ad: number[]; busy: boolean }>();
+      for (const u of units) { const e = by.get(u.owner) ?? { land: [], ad: [], busy: false }; (u.kind === 'land' ? e.land : e.ad).push(u.strength); if (u.order) e.busy = true; by.set(u.owner, e); }
+      const avg = (a: number[]) => a.reduce((x1, y1) => x1 + y1, 0) / a.length;
+      for (const [o, e] of [...by].sort((a, b) => (a[0] === p ? -1 : b[0] === p ? 1 : 0))) {
+        const me = o === p;
+        if (!me && z < 1.2) continue;
+        if (!me && z < 0.55) continue;
+        if (e.land.length) cx += this.counter(cx, y, { kind: 'land', n: String(e.land.length), str: avg(e.land), color: C(s, o).color, style: me ? 'me' : 'ally', busy: e.busy }) + 3;
+        if (e.ad.length && (me ? z > 1.9 : z > 2.4)) cx += this.counter(cx, y, { kind: 'ad', n: String(e.ad.length), str: avg(e.ad), color: C(s, o).color, style: me ? 'me' : 'ally' }) + 3;
       }
-    } else if (atWar(s, p, ns.ctrl) || campsAtWar(s, C(s, p).camp, C(s, ns.ctrl).camp)) {
-      const seen = s.seen[n];
-      if (seen && s.day - seen.day <= 1) { if (seen.land > 0.2 || seen.ad) this.chip(cx, y, '#E0606A', [seen.land > 0.2 ? `陸${Math.max(1, Math.round(seen.land))}` : '', seen.ad ? `防${seen.ad}` : ''].filter(Boolean).join(' ')); }
-      else if (seen && s.day - seen.day <= 21 && seen.land >= 0.5) this.chip(cx, y, '', `?≈${Math.round(seen.land)}`, true);
-      else if (W.adj[n].some((e) => sameSide(s, s.nodes[e.to].ctrl, p))) this.chip(cx, y, '', '?', true);
+    } else if (z > 0.55 && (atWar(s, p, ns.ctrl) || campsAtWar(s, C(s, p).camp, C(s, ns.ctrl).camp))) {
+      const seen = s.seen[n]; const col = C(s, ns.ctrl).color;
+      if (seen && s.day - seen.day <= 1) { if (seen.land > 0.2) cx += this.counter(cx, y, { kind: 'land', n: String(Math.max(1, Math.round(seen.land))), str: 100, color: col, style: 'enemy' }) + 3; if (seen.ad && z > 1.2) this.counter(cx, y, { kind: 'ad', n: String(seen.ad), str: 100, color: col, style: 'enemy' }); }
+      else if (seen && s.day - seen.day <= 21 && seen.land >= 0.5) this.counter(cx, y, { kind: 'land', n: `?≈${Math.round(seen.land)}`, str: 0, color: col, style: 'unknown' });
+      else if (W.adj[n].some((e) => sameSide(s, s.nodes[e.to].ctrl, p))) this.counter(cx, y, { kind: 'land', n: '?', str: 0, color: col, style: 'unknown' });
     }
   }
   fleetChips(s: GameState) {

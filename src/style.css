@@ -79,7 +79,7 @@ small { font-size: 11px; }
 #nodePanel .acts button { min-height: 40px; font-size: 14px; }
 #nodePanel .ph .muted { font-size: 11px; }
 
-#strikeBar { position: fixed; left: 462px; right: 372px; bottom: 10px; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); z-index: 3; max-width: 820px; }
+#strikeBar { position: fixed; left: 462px; bottom: 10px; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); z-index: 3; max-width: 820px; }
 #strikeBar .srow { display: flex; gap: 8px; align-items: stretch; }
 #strikeBar .link { align-self: center; margin: 0 -6px; color: var(--bad); font-size: 14px; z-index: 1; }
 #strikeBar > * { pointer-events: auto; }
@@ -105,7 +105,7 @@ small { font-size: 11px; }
 #tools .pair { display: flex; gap: 6px; }
 #tools .pair button { flex: 1; justify-content: center; padding: 0; }
 
-#legend { position: fixed; right: 10px; top: 520px; width: 172px; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: 8px; background: rgba(28, 29, 31, 0.9); border: 1px solid var(--line2); font-size: 12px; color: var(--tx2); z-index: 3; max-width: 190px; }
+#legend { position: fixed; right: 150px; top: 250px; width: 172px; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: 8px; background: rgba(28, 29, 31, 0.9); border: 1px solid var(--line2); font-size: 12px; color: var(--tx2); z-index: 3; max-width: 190px; }
 #legend span { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx); }
 #legend i.hatch { background: repeating-linear-gradient(135deg, #C9C2B0 0 3px, #6A6660 3px 6px); }
 #legend i { width: 26px; height: 14px; border-radius: 2px; flex: none; border: 1px solid rgba(0, 0, 0, 0.4); }
@@ -166,3 +166,25 @@ button.primary:hover:not(:disabled) { background: #E2756B; border-color: #E2756B
 
 #tips { position: fixed; left: 50%; top: 150px; transform: translateX(-50%); width: 460px; display: flex; flex-direction: column; gap: 6px; z-index: 7; }
 #tips .toast { font-weight: 400; align-items: flex-start; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.45); }
+
+/* 部隊一覧（拠点パネル） */
+.ulist { margin: 8px 10px 0; display: flex; flex-direction: column; gap: 3px; max-height: 150px; overflow: auto; }
+.urow { display: grid; grid-template-columns: 38px 70px 70px 40px 1fr; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: var(--bg3); font-size: 12px; }
+.urow.mine { box-shadow: inset 3px 0 0 #F2F2F2; }
+.urow .ui { font-weight: 700; } .urow .uo { color: var(--tx2); } .urow .bar { width: 70px; } .urow .us { color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hintline { margin: 6px 12px 0; font-size: 12px; color: var(--tx2); }
+.hintline b.r { color: #E8806F; }
+/* やることリスト */
+#todo { position: fixed; left: 10px; top: 146px; width: 330px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); border-top: 3px solid #E8C063; z-index: 3; display: flex; flex-direction: column; gap: 6px; }
+#todo .th { display: flex; justify-content: space-between; align-items: baseline; }
+#todo .th b { font-size: 15px; } #todo .th span { color: var(--mut); font-family: 'JetBrains Mono', monospace; }
+#todo .ti { display: flex; align-items: flex-start; gap: 8px; text-align: left; padding: 7px 8px; min-height: 0; font-size: 13px; line-height: 1.45; background: var(--bg3); }
+#todo .box { width: 14px; height: 14px; flex: none; margin-top: 2px; border: 1.5px solid #E8C063; border-radius: 3px; }
+/* チュートリアル */
+#tour { position: fixed; inset: 0; z-index: 25; pointer-events: none; }
+#tour .ring { position: fixed; border: 3px solid #E8C063; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(8,10,14,0.55); pointer-events: none; transition: all 0.25s; }
+#tour .card { position: fixed; width: 400px; padding: 16px 18px; border-radius: 10px; background: #1E1F21; border: 1px solid #E8C063; pointer-events: auto; line-height: 1.6; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+#tour .card h3 { margin: 0 0 6px; font-size: 17px; }
+#tour .card .nav { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+#tour .card .nav span { color: var(--mut); font-size: 12px; }
+#tour .card .nav div { display: flex; gap: 6px; }
