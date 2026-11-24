@@ -30,6 +30,7 @@ export class UI {
   cyberSel = { target: '', effect: 'gdp' as 'gdp' | 'sat' | 'ad' };
   weekSnap = { debt: 0, opinion: 0, missile: 0, ad: 0, week: -1 };
   newsSeen = 0;
+  foes = new Set<string>(); foesOf: GameState | null = null; capAlertDay = -99;
   tour: () => void = () => {};
 
   constructor(h: Host) { this.h = h; }
@@ -94,7 +95,7 @@ export class UI {
       this.weekSnap = { debt: this.debtRatio(), opinion: me.opinion, missile: this.missilePct(), ad: this.adPct(), week: weekOf(s) };
     }
     setMood(s.phase === 'war' && this.me.engaged ? 'war' : 'calm');
-    this.updateCand(); this.top(); this.legend(); this.nodePanel(); this.strikeBar(); this.renderPanel(); this.todo(); this.flushNews(); this.checkModals();
+    this.updateCand(); this.top(); this.legend(); this.nodePanel(); this.strikeBar(); this.renderPanel(); this.todo(); this.flushNews(); this.checkModals(); this.checkAlerts();
     const tb = document.querySelectorAll('#tools button');
     tb.forEach((b) => { const t = (b as HTMLElement).dataset.tool; b.classList.toggle('on', (t === 'mode' && this.h.v.mode === 'camp') || t === this.h.v.overlay); });
   }
@@ -443,6 +444,37 @@ export class UI {
       else if (n.kind === 'good') sfx.capture();
     }
   }
+  // ---------- 警報：攻め込まれたら自動で止めて知らせる ----------
+  currentFoes(): string[] { const s = this.s; return Object.values(s.countries).filter((c) => !c.capitulated && atWar(s, s.player, c.id)).map((c) => c.id); }
+  syncFoes() { this.foes = new Set(this.currentFoes()); this.foesOf = this.s; }
+  checkAlerts() {
+    const s = this.s, me = this.me;
+    if (this.foesOf !== s) { this.syncFoes(); this.capAlertDay = -99; return; }
+    const now = this.currentFoes(); const fresh = now.filter((id) => !this.foes.has(id));
+    if ($('#modal').dataset.kind || s.over) return;
+    this.foes = new Set(now);
+    // 知らせるのは、主要国か、陸で国境を接する国だけ（遠くの中小国の参戦では止めない）
+    const near = (id: string) => W.nodes.some((_, i) => s.nodes[i].ctrl === me.id && W.adj[i].some((e) => s.nodes[e.to].ctrl === id));
+    const alarm = fresh.filter((id) => C(s, id).major || near(id));
+    if (alarm.length) {
+      const majors = alarm.filter((id) => C(s, id).major); const show = (majors.length ? majors : alarm).slice(0, 4).map((id) => C(s, id).name).join('・');
+      const border = W.nodes.filter((_, i) => s.nodes[i].ctrl === me.id && W.adj[i].some((e) => fresh.includes(s.nodes[e.to].ctrl))).map((n) => n.name).slice(0, 4);
+      sfx.war();
+      this.modal('alert', `<h2>${show}${alarm.length > 4 || (majors.length && alarm.length > majors.length) ? 'など' : ''}と戦争になりました</h2>
+        <p>ゲームを一時停止しました。${border.length ? `国境の拠点（${border.join('・')}）が攻められるおそれがあります。` : '陸の国境は接していませんが、ミサイルと上陸に注意してください。'}</p>
+        <ul><li>内陸の師団を国境へ動かす（自分の駒がいる拠点を押して、行き先を押す）</li><li>首都に防空大隊と師団を残す</li><li>「打撃」で相手の前線の部隊や防空陣地を狙う</li></ul>
+        <div class="acts"><button type="button" class="hot" data-act="closeModal">止めたまま地図を見る</button><button type="button" data-act="resume">そのまま進める</button></div>`);
+      this.h.setPaused(true); return;
+    }
+    // 首都が狙われたとき（3週間に1回まで）
+    const hit = s.orders.find((o) => o.to === me.capital && s.nodes[me.capital].ctrl === me.id && atWar(s, me.id, o.owner));
+    if (hit && s.day - this.capAlertDay > 21) {
+      this.capAlertDay = s.day; sfx.alert();
+      this.h.v.selected = me.capital; this.h.view.centerOn(me.capital, Math.max(1.4, this.h.view.cam.z));
+      this.toast(`<b>首都${W.nodes[me.capital].name}が${C(s, hit.owner).name}に攻められています。</b><br>一時停止しました。近くの師団を首都へ動かしてください（スペースキーで再開）`, 'bad', true);
+      this.h.setPaused(true); this.nodePanel();
+    }
+  }
   checkModals() {
     const s = this.s;
     if ($('#modal').dataset.kind) return;
@@ -469,10 +501,10 @@ export class UI {
   }
 
   // ---------- 入力 ----------
-  act(res: A.Res) { if (res.msg) this.toast(res.msg, res.ok ? 'good' : 'warn'); res.ok ? sfx.order() : sfx.click(); this.daily(); }
+  act(res: A.Res) { this.syncFoes(); if (res.msg) this.toast(res.msg, res.ok ? 'good' : 'warn'); res.ok ? sfx.order() : sfx.click(); this.daily(); }
   onClick(e: Event) {
     const t = (e.target as HTMLElement).closest('button,[data-panel]') as HTMLElement | null;
-    if (!t) return;
+    if (!t || !this.h.s) return; // 試合が始まる前（開始画面）は何もしない
     const s = this.s, me = s.player, sel = this.h.v.selected ?? -1;
     if (t.dataset.panel) { sfx.click(); this.open(t.dataset.panel as Panel); return; }
     if (t.dataset.todo) {
@@ -497,6 +529,7 @@ export class UI {
       case 'pause': this.h.setPaused(!this.h.paused); break;
       case 'settings': this.h.setPaused(true); this.settingsModal(); break;
       case 'closeModal': this.closeModal(); break;
+      case 'resume': this.closeModal(); this.h.setPaused(false); break;
       case 'closePanel': this.open(null); break;
       case 'dismiss': t.parentElement?.remove(); break;
       case 'deselect': this.h.v.selected = null; break;

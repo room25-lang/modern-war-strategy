@@ -17,6 +17,10 @@ export const CFG = {
   adUnitCap: 60, adSiteCap: 50, adRegionCap: 8,
   // 地上戦
   combatLoss: 7, progressRate: 26, landSpeedKm: 460,
+  progressMax: 20, progressEmpty: 8, // 1日に進む占領の上限（1拠点に最低4〜5日かかる）
+  momentumRate: 4.5, momentumMax: 1.6, // 勢い：世界に占める割合が5%を超えた分×Rate だけ地上戦が強くなる（上限Max）
+  capitalHold: 0.5,          // プレイヤーの国は本土の拠点をこの割合以上持っていれば、首都を失っても戦い続ける
+  capitalHoldAI: false,      // CPUの主要国にも同じ粘りを認めるか（認めると覇権国が生まれにくい）
   // 世論
   opinionWarDrift: -0.05, opinionPeaceTarget: 55,
   opinionNoMobilize: 40, opinionBudgetCap: 25, opinionForcedPeace: 12,

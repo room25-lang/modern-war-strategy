@@ -26,10 +26,11 @@ function updateShare(s: GameState) {
   for (const k of Object.keys(share)) delete share[k];
   for (const [k, x] of Object.entries(v)) share[k] = x / tot;
 }
+let shareOf: GameState | null = null;
 export function step(s: GameState) {
   if (s.over) return;
   s.day++;
-  if (s.day % 7 === 1 || !Object.keys(share).length) updateShare(s);
+  if (s.day % 7 === 1 || shareOf !== s) { updateShare(s); shareOf = s; }
   updateCamps(s);
   updateTension(s);
   runStrikes(s);
@@ -162,9 +163,9 @@ function outbreak(s: GameState, r: number): boolean {
   return true;
 }
 export function campName(s: GameState, camp: number): string {
-  const ms = s.majors.filter((m) => C(s, m).camp === camp).map((m) => C(s, m).name);
+  const ms = s.majors.filter((m) => C(s, m).camp === camp && !C(s, m).capitulated).map((m) => C(s, m).name);
   if (ms.length) return ms.join('・') + '陣営';
-  const mi = Object.values(s.countries).filter((c) => c.camp === camp).map((c) => c.name);
+  const mi = Object.values(s.countries).filter((c) => c.camp === camp && !c.capitulated).map((c) => c.name);
   return mi.length ? mi.slice(0, 2).join('・') + '陣営' : '中小国陣営';
 }
 export function engage(s: GameState, id: string, announce = true) {
@@ -420,7 +421,7 @@ function landPower(s: GameState, u: Unit, attack: boolean, node: number): number
   const air = 0.75 + 0.5 * airShare(s, W.nodes[node].region, side(s, u.owner));
   const init = c.initiatorDays > 0 ? (attack ? 1.15 : 1) : 1;
   const bonus = c.ai && c.major ? CFG.diff[s.difficulty].bonus : 1;
-  const momentum = 1 + Math.min(1.2, Math.max(0, (share[u.owner] ?? 0) - 0.05) * 3.2);
+  const momentum = 1 + Math.min(CFG.momentumMax, Math.max(0, (share[u.owner] ?? 0) - 0.05) * CFG.momentumRate);
   return u.strength / 100 * genF(c, 'armor') * doc * (0.4 + 0.6 * sup) * air * init * Math.sqrt(bonus) * momentum;
 }
 function groundCombat(s: GameState) {
@@ -451,7 +452,7 @@ function resolveOrder(s: GameState, o: Order) {
   const attLoss = CFG.combatLoss * dp / tot, defLoss = CFG.combatLoss * ap / tot;
   for (const u of att) hurt(s, u, attLoss / att.length * 1.4);
   for (const u of def) hurt(s, u, defLoss / Math.max(1, def.length) * 1.4);
-  o.progress += Math.max(0, ratio - 0.8) * CFG.progressRate + (def.every((u) => u.strength <= 0) ? 30 : 0);
+  o.progress += Math.min(CFG.progressMax, Math.max(0, ratio - 0.8) * CFG.progressRate) + (def.every((u) => u.strength <= 0) ? CFG.progressEmpty : 0);
   if (ratio < 0.6) o.badDays++; else o.badDays = 0;
   const avg = att.reduce((a, u) => a + u.strength, 0) / att.length;
   if (o.progress >= 100) return capture(s, o, att);
@@ -480,14 +481,22 @@ function capture(s: GameState, o: Order, att: Unit[]) {
   if (W.nodes[n].capital && n === C(s, ns.owner).capital) capitalFallen(s, ns.owner, o.owner);
 }
 // 首都を落とされた国は降伏し、残った領土をすべて落とした国に併合される（覇権国が生まれやすい）
-function capitalFallen(s: GameState, id: string, by: string) {
+function capitalFallen(s: GameState, id: string, by0: string) {
+  const by = annexer(s, id, by0);
   const c = C(s, id); const B = C(s, by);
-  if (c.major && c.opinion >= 60 && (W.nodesByCountry[id] ?? []).filter((n) => s.nodes[n].ctrl === id).length >= 12) {
-    news(s, `${c.name}は首都を失いましたが、戦いを続けています`, 'warn'); return;
+  const home = W.nodesByCountry[id] ?? [];
+  if (c.major && (id === s.player || CFG.capitalHoldAI) && home.filter((n) => s.nodes[n].ctrl === id).length >= home.length * CFG.capitalHold) {
+    news(s, `${c.name}は首都${W.nodes[c.capital].name}を失いましたが、政府を移して戦いを続けています`, id === s.player ? 'bad' : 'warn'); return;
   }
   news(s, `【併合】${c.name}は首都を失って降伏し、${B.name}に併合されました`, mine(s, id) ? 'bad' : mine(s, by) ? 'good' : 'info');
   if (id === s.player) { endGame(s, true); return; }
   annex(s, id, by);
+}
+// 中小国が大国を倒したときは、同じ陣営で一緒に戦っている主要国が併合する（中小国が世界一にならないように）
+function annexer(s: GameState, id: string, by: string): string {
+  if (C(s, by).major || !C(s, id).major) return by;
+  const ms = s.majors.filter((m) => sameSide(s, m, by) && atWar(s, m, id) && !C(s, m).capitulated).sort((x, y) => (share[y] ?? 0) - (share[x] ?? 0));
+  return ms[0] ?? by;
 }
 export function annex(s: GameState, id: string, by: string) {
   const c = C(s, id);
@@ -559,6 +568,7 @@ function peaceChecks(s: GameState) {
     if (held / home.length >= (c.major ? 0.4 : 0.5)) continue;
     const by: Record<string, number> = {}; for (const n of home) { const k = s.nodes[n].ctrl; if (k !== c.id && atWar(s, k, c.id)) by[k] = (by[k] ?? 0) + 1; }
     const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0]; if (!top) continue;
+    top[0] = annexer(s, c.id, top[0]);
     news(s, `【併合】${c.name}は本土の大半を失って降伏し、${C(s, top[0]).name}に併合されました`, mine(s, c.id) ? 'bad' : mine(s, top[0]) ? 'good' : 'info');
     if (c.id === s.player) { endGame(s, true); return; }
     annex(s, c.id, top[0]);
@@ -748,8 +758,9 @@ export function endGame(s: GameState, defeat: boolean) {
   const achieved: string[] = []; const notes: string[] = [];
   if (defeat) { s.result = { rank: 'D', achieved: [], notes: ['首都を失い降伏しました'], defeat: true }; return; }
   const enemyMajors = s.majors.filter((m) => campsAtWar(s, C(s, m).camp, P.camp));
-  const military = enemyMajors.length > 0 && enemyMajors.every((m) => C(s, m).capitulated || sameSide(s, s.nodes[C(s, m).capital].ctrl, p));
-  if (military) achieved.push('軍事勝利：敵の主要国をすべて降伏させるか、首都を押さえました');
+  const grew = W.nodes.reduce((a, n, i) => a + (s.nodes[i].ctrl === p ? n.ind + 1 : 0), 0) > (W.nodesByCountry[p] ?? []).reduce((a, n) => a + W.nodes[n].ind + 1, 0) * 1.1;
+  const military = grew && enemyMajors.length > 0 && enemyMajors.every((m) => C(s, m).capitulated || sameSide(s, s.nodes[C(s, m).capital].ctrl, p));
+  if (military) achieved.push('軍事勝利：自ら領土を広げ、敵の主要国をすべて降伏させるか首都を押さえました');
   const gp = goalProgress(s, p);
   if (P.warGoal.length && gp >= 0.5) achieved.push(`有利な講和：戦争目的を${Math.round(gp * 100)}%達成しました`);
   // 陣営の得点

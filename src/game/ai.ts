@@ -3,7 +3,7 @@ import { W, nodeKm } from '../world';
 import { CFG } from '../config';
 import { C, atWar, chance, enemyCampIdle, exhaustion, genF, hostileNode, landAt, rand, sameSide, side, seaOK } from './rules';
 import * as A from './actions';
-import { declareWar } from './sim';
+import { declareWar, share } from './sim';
 
 const diff = (s: GameState) => CFG.diff[s.difficulty];
 const ownNodes = (s: GameState, id: string) => { const o: number[] = []; for (let i = 0; i < W.nodes.length; i++) if (s.nodes[i].ctrl === id) o.push(i); return o; };
@@ -52,7 +52,8 @@ export function aiWarGoal(s: GameState, c: Country) {
 // ---------- 領土拡大（毎週）：どの国も、勝てそうな隣国があれば宣戦する。同盟国も例外ではない ----------
 export function aiExpand(s: GameState, c: Country) {
   if (s.phase !== 'war' || c.capitulated || (!c.major && !c.fights)) return;
-  if (exhaustion(s, c.id) > 0.5 || c.opinion < 38 || (c.peace['_'] ?? 0) > s.day) return;
+  const big = (share[c.id] ?? 0) > 0.16; // 大国は多少の厭戦では止まらない
+  if (exhaustion(s, c.id) > (big ? 0.7 : 0.5) || c.opinion < (big ? 18 : 38) || (c.peace['_'] ?? 0) > s.day) return;
   const pow = (id: string) => s.units.reduce((a, u) => a + (u.owner === id && u.kind === 'land' ? u.strength / 100 * genF(C(s, id), 'armor') : 0), 0);
   const myPow = pow(c.id);
   const alive = s.majors.filter((m) => !C(s, m).capitulated);
