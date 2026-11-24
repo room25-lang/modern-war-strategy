@@ -2,7 +2,7 @@ import type { Country, GameState, Order, StrikeFx, Unit } from '../types';
 import { W, nodeKm } from '../world';
 import { CFG } from '../config';
 import {
-  C, adAt, airShare, atWar, campsAtWar, chance, enemyCampIdle, exhaustion, friendlyNode, genF, goalProgress, hopDays, landAt,
+  C, adAt, airShare, amphibZones, atWar, campsAtWar, chance, enemyCampIdle, exhaustion, friendlyNode, genF, goalProgress, hopDays, landAt,
   rand, sameSide, seaOK, side, sidesAtWar, supplyAt,
 } from './rules';
 import { newUnit } from './state';
@@ -20,6 +20,30 @@ const mine = (s: GameState, id: string) => id === s.player || sameSide(s, id, s.
 // ===================== 1日進める =====================
 // 世界に占める領土の割合（大国ほど戦力に勢いがつく）
 export const share: Record<string, number> = {};
+// 開始時の世界に占める割合
+const initCache: Record<string, number> = {};
+export function initShare(id: string): number {
+  if (initCache[id] === undefined) { const tot = W.nodes.reduce((a, n) => a + n.ind + 1, 0); initCache[id] = (W.nodesByCountry[id] ?? []).reduce((a, n) => a + W.nodes[n].ind + 1, 0) / tot; }
+  return initCache[id];
+}
+// いま世界で最も大きい主要国（終盤はこの国が覇権を取りに行く）
+let leadDay = -1, leadOf: GameState | null = null, leadId = '';
+export function leader(s: GameState): string {
+  if (leadDay === s.day && leadOf === s) return leadId;
+  leadDay = s.day; leadOf = s; leadId = leaderCalc(s); return leadId;
+}
+function leaderCalc(s: GameState): string {
+  // 大きさだけでなく伸び方も見る（最初から大きいだけの国が毎回選ばれないように）
+  let b = '', bv = -1;
+  for (const m of s.majors) {
+    if (C(s, m).capitulated) continue;
+    const init = initShare(m) || 0.01;
+    const v = (share[m] ?? 0) * Math.sqrt((share[m] ?? 0) / init);
+    if (v > bv) { bv = v; b = m; }
+  }
+  return b;
+}
+export const lateGame = (s: GameState) => s.day >= CFG.hegemonyWeek * 7;
 function updateShare(s: GameState) {
   let tot = 0; const v: Record<string, number> = {};
   for (let n = 0; n < W.nodes.length; n++) { const x = W.nodes[n].ind + 1; tot += x; v[s.nodes[n].ctrl] = (v[s.nodes[n].ctrl] ?? 0) + x; }
@@ -255,9 +279,11 @@ function runStrikes(s: GameState) {
       + W.nodesByRegion[W.nodes[target].region].reduce((a, nn) => a + (sameSide(s, s.nodes[nn].ctrl, defId) ? adAt(s, nn).length * CFG.adRegionCap : 0), 0);
     cap *= (D.doctrine.air === 'ground' ? 1.35 : 1) * genF(D, 'ad') * (D.effects.adMalus > 0 ? 0.6 : 1);
     cap = Math.max(0, cap - (capUsed.get(target) ?? 0));
-    const attempts = Math.min(total, cap, D.stock.interceptor);
+    // ドローンは機関砲・電子妨害でも落とせるため、迎撃弾は5機に1発で足りる
+    const perShot = (n.cruise + n.ballistic + n.drone * CFG.droneInterceptCost) / total;
+    const attempts = Math.min(total, cap, D.stock.interceptor / perShot);
     capUsed.set(target, (capUsed.get(target) ?? 0) + attempts);
-    D.stock.interceptor -= attempts;
+    D.stock.interceptor -= attempts * perShot;
     let leakDmg = 0, intercepted = 0;
     for (const w of ['cruise', 'ballistic', 'drone'] as const) {
       if (!n[w]) continue;
@@ -421,8 +447,9 @@ function landPower(s: GameState, u: Unit, attack: boolean, node: number): number
   const air = 0.75 + 0.5 * airShare(s, W.nodes[node].region, side(s, u.owner));
   const init = c.initiatorDays > 0 ? (attack ? 1.15 : 1) : 1;
   const bonus = c.ai && c.major ? CFG.diff[s.difficulty].bonus : 1;
-  const momentum = 1 + Math.min(CFG.momentumMax, Math.max(0, (share[u.owner] ?? 0) - 0.05) * CFG.momentumRate);
-  return u.strength / 100 * genF(c, 'armor') * doc * (0.4 + 0.6 * sup) * air * init * Math.sqrt(bonus) * momentum;
+  const momentum = 1 + Math.min(CFG.momentumMax, Math.max(0, (share[u.owner] ?? 0) - initShare(u.owner)) * CFG.momentumRate); // 勢いは「最初より広げた分」で決まる
+  const drive = lateGame(s) && u.owner === leader(s) && (share[u.owner] ?? 0) < CFG.hegemonyCap ? CFG.hegemonyPower : 1; // 終盤の首位は総力戦
+  return u.strength / 100 * genF(c, 'armor') * doc * (0.4 + 0.6 * sup) * air * init * Math.sqrt(bonus) * momentum * drive;
 }
 function groundCombat(s: GameState) {
   for (const o of [...s.orders]) resolveOrder(s, o);
@@ -436,12 +463,9 @@ function resolveOrder(s: GameState, o: Order) {
   const tCtrl = s.nodes[o.to].ctrl;
   if (sameSide(s, o.owner, tCtrl)) return end();
   if (!atWar(s, o.owner, tCtrl)) { if (enemyCampIdle(s, o.owner, tCtrl)) dragIn(s, o.owner, tCtrl); else return end(`${W.nodes[o.to].name}への攻勢は、相手と戦争状態でないため取りやめました`); }
-  if (o.amphib) {
-    const zs = W.nodes[o.from].zones.filter((z) => W.nodes[o.to].zones.includes(z) || W.nodes[o.to].zones.some((t) => W.zones[z].adj.includes(t)));
-    if (!zs.some((z) => seaOK(s, z, side(s, o.owner)))) return end(`${W.nodes[o.to].name}への上陸は、制海を失ったため中止しました`);
-  }
+  if (o.amphib && !amphibZones(s, o.owner, o.from, o.to)) return end(`${W.nodes[o.to].name}への上陸は、制海を失ったため中止しました`);
   const def = s.units.filter((u) => u.node === o.to && (u.kind === 'land' || u.kind === 'ad') && !u.move && u.strength > 0 && atWar(s, o.owner, u.owner));
-  let ap = att.reduce((a, u) => a + landPower(s, u, true, o.from), 0) * rand(0.85, 1.15) * (o.amphib ? 0.6 : 1);
+  let ap = att.reduce((a, u) => a + landPower(s, u, true, o.from), 0) * rand(0.85, 1.15) * (o.amphib ? (CFG.blueWater.includes(o.owner) ? CFG.amphibPowerBlue : CFG.amphibPower) : 1);
   if (o.owner === s.player && !(s.seen[o.to] && s.day - s.seen[o.to].day <= 7)) ap *= 0.85;
   const nd = W.nodes[o.to];
   const fort = (nd.capital ? 1.2 : 1) * (nd.ind >= 4 ? 1.1 : 1);
@@ -489,7 +513,7 @@ function capitalFallen(s: GameState, id: string, by0: string) {
     news(s, `${c.name}は首都${W.nodes[c.capital].name}を失いましたが、政府を移して戦いを続けています`, id === s.player ? 'bad' : 'warn'); return;
   }
   news(s, `【併合】${c.name}は首都を失って降伏し、${B.name}に併合されました`, mine(s, id) ? 'bad' : mine(s, by) ? 'good' : 'info');
-  if (id === s.player) { endGame(s, true); return; }
+  if (id === s.player && !c.ai) { endGame(s, true); return; } // 観戦（CPUに任せた席）は普通に併合される
   annex(s, id, by);
 }
 // 中小国が大国を倒したときは、同じ陣営で一緒に戦っている主要国が併合する（中小国が世界一にならないように）
@@ -570,7 +594,7 @@ function peaceChecks(s: GameState) {
     const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0]; if (!top) continue;
     top[0] = annexer(s, c.id, top[0]);
     news(s, `【併合】${c.name}は本土の大半を失って降伏し、${C(s, top[0]).name}に併合されました`, mine(s, c.id) ? 'bad' : mine(s, top[0]) ? 'good' : 'info');
-    if (c.id === s.player) { endGame(s, true); return; }
+    if (c.id === s.player && !c.ai) { endGame(s, true); return; }
     annex(s, c.id, top[0]);
   }
   for (const c of Object.values(s.countries)) {
@@ -585,6 +609,7 @@ function peaceChecks(s: GameState) {
     if (!c.ai || !c.major) continue;
     const ex = exhaustion(s, c.id);
     const foe = strongestEnemy(s, c.id); if (!foe) continue;
+    if (lateGame(s) && c.id === leader(s) && ex < 0.95) continue; // 終盤の首位は講和しない
     if (ex > 0.78 && s.day - c.engagedDay > 98) {
       if (foe === s.player) { if (!s.pendingPeace) s.pendingPeace = { from: c.id, nodes: [] }; }
       else if (peaceAccept(s, c.id, foe, 'ask')) { news(s, `${c.name}が講和し、戦争から抜けました`, mine(s, c.id) ? 'bad' : 'good'); exitWar(s, c.id, foe); }

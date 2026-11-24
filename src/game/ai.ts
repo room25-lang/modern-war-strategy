@@ -1,9 +1,9 @@
 import type { Country, Facility, GameState } from '../types';
 import { W, nodeKm } from '../world';
 import { CFG } from '../config';
-import { C, atWar, chance, enemyCampIdle, exhaustion, genF, hostileNode, landAt, rand, sameSide, side, seaOK } from './rules';
+import { C, amphibZones, atWar, chance, enemyCampIdle, exhaustion, genF, hostileNode, landAt, rand, sameSide, seaReach, side, seaOK } from './rules';
 import * as A from './actions';
-import { declareWar, share } from './sim';
+import { declareWar, lateGame, leader, share } from './sim';
 
 const diff = (s: GameState) => CFG.diff[s.difficulty];
 const ownNodes = (s: GameState, id: string) => { const o: number[] = []; for (let i = 0; i < W.nodes.length; i++) if (s.nodes[i].ctrl === id) o.push(i); return o; };
@@ -53,22 +53,27 @@ export function aiWarGoal(s: GameState, c: Country) {
 export function aiExpand(s: GameState, c: Country) {
   if (s.phase !== 'war' || c.capitulated || (!c.major && !c.fights)) return;
   const big = (share[c.id] ?? 0) > 0.16; // 大国は多少の厭戦では止まらない
-  if (exhaustion(s, c.id) > (big ? 0.7 : 0.5) || c.opinion < (big ? 18 : 38) || (c.peace['_'] ?? 0) > s.day) return;
+  const hegemon = c.major && lateGame(s) && c.id === leader(s) && (share[c.id] ?? 0) < CFG.hegemonyCap; // 終盤の首位は覇権を取りに行く
+  if (!hegemon && (exhaustion(s, c.id) > (big ? 0.7 : 0.5) || c.opinion < (big ? 18 : 38))) return;
+  if ((c.peace['_'] ?? 0) > s.day || c.opinion < 8) return;
   const pow = (id: string) => s.units.reduce((a, u) => a + (u.owner === id && u.kind === 'land' ? u.strength / 100 * genF(C(s, id), 'armor') : 0), 0);
   const myPow = pow(c.id);
   const alive = s.majors.filter((m) => !C(s, m).capitulated);
   const avg = alive.reduce((a, m) => a + pow(m), 0) / Math.max(1, alive.length);
   const strong = myPow / Math.max(1, avg); // 1より大きいほど大国
   const foes = Object.values(s.countries).filter((o) => atWar(s, c.id, o.id)).length;
-  if (foes >= (c.major ? Math.min(5, 2 + Math.floor(strong)) : 1)) return;
-  const p = c.major ? ({ easy: 0.18, normal: 0.32, hard: 0.45 } as Record<string, number>)[s.difficulty] * Math.min(2.5, Math.max(0.6, strong)) : 0.03;
+  if (foes >= (hegemon ? 6 : c.major ? Math.min(5, 2 + Math.floor(strong)) : 1)) return;
+  const p = hegemon ? 1 : c.major ? ({ easy: 0.18, normal: 0.32, hard: 0.45 } as Record<string, number>)[s.difficulty] * Math.min(2.5, Math.max(0.6, strong)) : 0.03;
   if (!chance(p)) return;
   const front = new Map<string, number>();
   for (let n = 0; n < W.nodes.length; n++) {
     if (s.nodes[n].ctrl !== c.id) continue;
     for (const e of W.adj[n]) { const t = s.nodes[e.to].ctrl; if (t !== c.id && !atWar(s, c.id, t)) front.set(t, (front.get(t) ?? 0) + W.nodes[e.to].ind + 1); }
     // 海の向こう（同じ海域の港）も狙う
-    if (c.major && W.nodes[n].port) for (const z of W.nodes[n].zones) for (const p of W.portsByZone[z]) { const t = s.nodes[p].ctrl; if (t !== c.id && !atWar(s, c.id, t)) front.set(t, (front.get(t) ?? 0) + (W.nodes[p].ind + 1) * 0.6); }
+    if (c.major && W.nodes[n].port) {
+      const zs = CFG.blueWater.includes(c.id) ? [...seaReach(s, side(s, c.id), W.nodes[n].zones, CFG.blueWaterHops).keys()] : W.nodes[n].zones;
+      for (const z of zs) for (const p of W.portsByZone[z]) { const t = s.nodes[p].ctrl; if (t !== c.id && !atWar(s, c.id, t)) front.set(t, Math.max(front.get(t) ?? 0, (W.nodes[p].ind + 1) * 0.6)); }
+    }
   }
   let best = '', bv = 0;
   for (const [t, gain] of front) {
@@ -77,7 +82,7 @@ export function aiExpand(s: GameState, c: Country) {
     // 相手の陣営が助けに来る分も見込む
     if (T.camp >= 0 && T.camp !== c.camp) for (const m of s.majors) if (m !== t && C(s, m).camp === T.camp) tp += pow(m) * 0.4;
     const betray = c.camp >= 0 && T.camp === c.camp;
-    const req = (betray ? 1.8 : T.camp < 0 ? 1.3 : 1.6) / Math.min(1.4, Math.max(1, strong * 0.8));
+    const req = (betray ? 1.8 : T.camp < 0 ? 1.3 : 1.6) / Math.min(1.4, Math.max(1, strong * 0.8)) / (hegemon ? 1.4 : 1);
     const ratio = myPow / Math.max(0.5, tp) * rand(0.85, 1.15);
     if (ratio < req) continue;
     const v = (gain + T.indBase * 0.3) * Math.min(3, ratio / req) * (betray ? 0.8 : 1);
@@ -155,7 +160,7 @@ export function aiDaily(s: GameState, c: Country) {
   if (!c.engaged || (!c.major && !c.fights)) return;
   const d = diff(s);
   const offset = (s.day + Number(c.id)) % 2;
-  void offset; attacks(s, c, d.attack, d.noise);
+  void offset; attacks(s, c, d.attack * (c.major && lateGame(s) && c.id === leader(s) ? 0.8 : 1), d.noise);
   if ((s.day + Number(c.id)) % 2 === 1) rebalance(s, c);
   if (c.major && (s.day + Number(c.id)) % 3 === 0) strikes(s, c);
 }
@@ -188,14 +193,19 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
     else if (best >= 0 && s.difficulty === 'hard' && chance(0.05)) A.orderTo(s, c.id, n, best); // 陽動
   }
   // 上陸作戦（陸の前線がないとき）
-  if (c.major && (s.day + Number(c.id)) % 7 === 0) {
+  const blue = CFG.blueWater.includes(c.id);
+  if (c.major && (s.day + Number(c.id)) % (blue ? 4 : 7) === 0) {
     const ports: number[] = []; for (let n = 0; n < W.nodes.length; n++) if (W.nodes[n].port && hostileNode(s, c.id, n)) ports.push(n);
     const goals = [...c.warGoal.filter((g) => ports.includes(g)), ...ports.filter((g) => !c.warGoal.includes(g))];
+    let launched = 0;
     for (const g of goals) {
-      if (!hostileNode(s, c.id, g) || !W.nodes[g].zones.length) continue;
-      const from = ownNodes(s, c.id).find((n) => W.nodes[n].port && landAt(s, n).filter((u) => u.owner === c.id && !u.order).length >= 3
-        && W.nodes[n].zones.some((z) => W.nodes[g].zones.includes(z) && seaOK(s, z, side(s, c.id))));
-      if (from !== undefined && estPower(s, g, 0.2) < 1.2) { A.orderTo(s, c.id, from, g); break; }
+      if (!hostileNode(s, c.id, g) || !W.nodes[g].zones.length || targeted.has(g)) continue;
+      const idle = (n: number) => landAt(s, n).filter((u) => u.owner === c.id && !u.order);
+      const from = ownNodes(s, c.id).filter((n) => W.nodes[n].port && idle(n).length >= 3 && (blue ? amphibZones(s, c.id, n, g) : W.nodes[n].zones.some((z) => W.nodes[g].zones.includes(z) && seaOK(s, z, side(s, c.id)))))
+        .sort((a, b) => idle(b).length - idle(a).length)[0];
+      if (from === undefined) continue;
+      const myP = (idle(from).length - 1) * CFG.amphibPowerBlue;
+      if (blue ? myP / estPower(s, g, 0.2) >= 2 : estPower(s, g, 0.2) < 1.2) { A.orderTo(s, c.id, from, g); targeted.add(g); if (++launched >= (blue ? 2 : 1)) break; }
     }
   }
 }
@@ -206,6 +216,27 @@ function rebalance(s: GameState, c: Country) {
   const side_: number[] = []; for (let i = 0; i < W.nodes.length; i++) if (sameSide(s, s.nodes[i].ctrl, c.id) && (s.nodes[i].ctrl === c.id || near(i))) side_.push(i);
   const front = side_.filter((n) => threat(n) > 0).sort((a, b) => threat(b) / estPower(s, b, 0) - threat(a) / estPower(s, a, 0));
   const interior = unitNodes(s, c.id).filter((n) => threat(n) === 0 && landAt(s, n).some((u) => u.owner === c.id && !u.order));
+  if (CFG.blueWater.includes(c.id) && interior.length) {
+    // 上陸の出撃港：敵の港に最も近い自国の港へ、首都の守り（2個師団）を残して兵を送る
+    const enemyPorts: number[] = []; for (let n = 0; n < W.nodes.length; n++) if (W.nodes[n].port && hostileNode(s, c.id, n)) enemyPorts.push(n);
+    const myPorts = nodes.filter((n) => W.nodes[n].port && s.nodes[n].health.port >= 30);
+    if (enemyPorts.length && myPorts.length) {
+      const reach = (p: number) => enemyPorts.filter((g) => amphibZones(s, c.id, p, g)).length;
+      const hub = [...myPorts].sort((a, b) => reach(b) - reach(a))[0];
+      const src = interior.filter((n) => n !== hub && !W.nodes[n].port || (n !== hub && reach(n) === 0)).sort((a, b) => landAt(s, b).length - landAt(s, a).length)[0];
+      if (reach(hub) > 0 && src !== undefined) {
+        const us = landAt(s, src).filter((u) => u.owner === c.id && !u.order);
+        const keep = src === c.capital ? 2 : 0;
+        if (us.length > keep && (!front.length || chance(0.5))) {
+          // 首都の守りを残して、残りを港へ
+          const movers = us.slice(keep);
+          const p = A.orderTo(s, c.id, src, hub);
+          if (p.ok && keep) for (const u of us.slice(0, keep)) u.move = null;
+          void movers; return;
+        }
+      }
+    }
+  }
   if (!front.length || !interior.length) return;
   let tgt = front[0];
   if (threat(tgt) < estPower(s, tgt, 0) * 0.9) {
@@ -217,7 +248,11 @@ function rebalance(s: GameState, c: Country) {
   const us = landAt(s, src).filter((u) => u.owner === c.id && !u.order);
   if (us.length >= (src === c.capital ? 2 : 1)) A.orderTo(s, c.id, src, tgt);
 }
+// 打撃の記録（同じ国を撃ち続けない・多くの国から撃たれている国は避ける）
+const strikeLog = new WeakMap<GameState, { a: string; d: string; day: number }[]>();
 function strikes(s: GameState, c: Country) {
+  const log = strikeLog.get(s) ?? (strikeLog.set(s, []).get(s)!);
+  while (log.length && log[0].day < s.day - 14) log.shift();
   const st = c.stock;
   if (st.cruise + st.ballistic + st.drone < 20) return;
   const cand: [number, Facility, number][] = [];
@@ -225,6 +260,9 @@ function strikes(s: GameState, c: Country) {
   for (let n = 0; n < W.nodes.length; n++) {
     const o = s.nodes[n].ctrl;
     if (!atWar(s, c.id, o)) continue;
+    if (log.some((x) => x.a === c.id && x.d === o && x.day > s.day - CFG.strikeGapDays)) continue;
+    // 1週間に同じ国を撃つのは2か国まで
+    if (new Set(log.filter((x) => x.d === o && x.a !== c.id && x.day > s.day - 7).map((x) => x.a)).size >= CFG.strikeMaxAttackers) continue;
     const d = Math.min(...mine.map((m) => nodeKm(m, n)));
     if (d > CFG.range.cruise && !(c.hasBallistic && d < CFG.range.ballistic)) continue;
     const front = W.adj[n].some((e) => sameSide(s, s.nodes[e.to].ctrl, c.id));
@@ -237,15 +275,18 @@ function strikes(s: GameState, c: Country) {
     else if (W.nodes[n].port && s.nodes[n].health.port > 40) { fac = 'port'; v = 2.5; }
     if (c.warGoal.includes(n)) v *= 1.5;
     if (weakAD) v *= 1.5;
+    v /= 1 + log.filter((x) => x.d === o && x.a !== c.id && x.day > s.day - 7).length; // ほかの国が撃っている相手は後回し
     cand.push([n, fac, v * rand(0.7, 1.3) / (1 + d / 2000)]);
   }
   if (!cand.length) return;
   cand.sort((a, b) => b[2] - a[2]);
   const [n, fac] = cand[0];
-  const share = s.difficulty === 'hard' ? 0.14 : s.difficulty === 'normal' ? 0.1 : 0.07;
+  const share = CFG.strikeShare[s.difficulty];
   const d = Math.min(...mine.map((m) => nodeKm(m, n)));
   const k = s.difficulty === 'hard' ? 1.3 : s.difficulty === 'normal' ? 1 : 0.7;
-  const take = { cruise: d <= CFG.range.cruise ? Math.min(Math.floor(40 * k), Math.floor(st.cruise * share)) : 0, ballistic: c.hasBallistic ? Math.min(Math.floor(16 * k), Math.floor(st.ballistic * share)) : 0, drone: d <= CFG.range.drone ? Math.min(Math.floor(120 * k), Math.floor(st.drone * share)) : 0, interceptor: 0 };
+  const m = CFG.strikeMax;
+  const take = { cruise: d <= CFG.range.cruise ? Math.min(Math.floor(m.cruise * k), Math.floor(st.cruise * share)) : 0, ballistic: c.hasBallistic ? Math.min(Math.floor(m.ballistic * k), Math.floor(st.ballistic * share)) : 0, drone: d <= CFG.range.drone ? Math.min(Math.floor(m.drone * k), Math.floor(st.drone * share)) : 0, interceptor: 0 };
   if (take.cruise + take.ballistic + take.drone < 5) return;
-  A.scheduleStrike(s, c.id, n, fac, take, 1, [0, 3, 6, 21][Math.floor(rand(0, 4))]);
+  const r = A.scheduleStrike(s, c.id, n, fac, take, 1, [0, 3, 6, 21][Math.floor(rand(0, 4))]);
+  if (r.ok) log.push({ a: c.id, d: s.nodes[n].ctrl, day: s.day });
 }

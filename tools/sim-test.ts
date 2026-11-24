@@ -28,7 +28,7 @@ while (!s.over) {
   if (s.day % 91 === 0) report();
 }
 report();
-console.log('result', s.result, 'ms', Date.now() - t0);
+console.log('result', s.result, 'END_WEEK', Math.floor(s.day / 7), 'ms', Date.now() - t0);
 console.log('news sample:\n' + s.news.slice(-25).map((n) => `  [${Math.floor(n.day / 7)}週] ${n.text}`).join('\n'));
 console.log('WARS:', s.news.filter((n) => n.text.includes('開戦') || n.text.includes('降伏') || n.text.includes('講和')).map((n) => `[${Math.floor(n.day / 7) + 1}週] ${n.text}`).join('\n  '));
 console.log('CAPTURES:', s.news.filter((n) => n.text.includes('占領')).length, 'STRIKES:', s.news.filter((n) => n.text.includes('打撃')).length);

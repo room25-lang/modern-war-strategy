@@ -59,6 +59,7 @@ export function findPath(s: GameState, owner: string, from: number, to: number):
     const nexts: [number, number][] = W.adj[cur].map((e) => [e.to, Math.max(1, Math.ceil(e.km / CFG.landSpeedKm))]);
     if (W.nodes[cur].port && s.nodes[cur].health.port >= 30) {
       for (const z of W.nodes[cur].zones) for (const p of W.portsByZone[z]) if (p !== cur && seaOK(s, z, sd)) nexts.push([p, 4]);
+      if (CFG.blueWaterLift && CFG.blueWater.includes(owner)) for (const [z, h] of seaReach(s, sd, W.nodes[cur].zones, CFG.blueWaterHops)) if (h > 0) for (const p of W.portsByZone[z]) if (p !== cur) nexts.push([p, 4 + CFG.blueWaterLiftDays * h]);
     }
     for (const [nx, d] of nexts) {
       if (nx !== to && !friendlyNode(s, owner, nx)) continue;
@@ -83,6 +84,24 @@ export function seaOK(s: GameState, z: number, sd: number): boolean {
   let enemy = 0;
   for (const k of Object.keys(sh)) { const c = Number(k); if (c !== sd && sidesAtWar(s, c, sd)) enemy += sh[c]; }
   return enemy === 0 || (sh[sd] ?? 0) >= 0.45;
+}
+// 制海の取れた海域をたどって届く海域と、その隣接の数（0＝出発の海域）
+export function seaReach(s: GameState, sd: number, from: number[], maxHops: number): Map<number, number> {
+  const out = new Map<number, number>(); const q: number[] = [];
+  for (const z of from) if (seaOK(s, z, sd) && !out.has(z)) { out.set(z, 0); q.push(z); }
+  while (q.length) {
+    const z = q.shift()!; const h = out.get(z)!; if (h >= maxHops) continue;
+    for (const a of W.zones[z].adj) if (!out.has(a) && seaOK(s, a, sd)) { out.set(a, h + 1); q.push(a); }
+  }
+  return out;
+}
+// 港 from から港 to へ上陸できる海域があるか（外洋海軍は何海域も先まで）
+export function amphibZones(s: GameState, owner: string, from: number, to: number): boolean {
+  const A = W.nodes[from], B = W.nodes[to]; if (!A.port || !B.zones.length) return false;
+  const sd = side(s, owner);
+  const hops = CFG.blueWater.includes(owner) ? CFG.blueWaterHops : 0;
+  const reach = seaReach(s, sd, A.zones, hops);
+  return B.zones.some((t) => reach.has(t) || W.zones[t].adj.some((a) => reach.has(a) && (reach.get(a) ?? 9) < Math.max(1, hops)));
 }
 export function sidesAtWar(s: GameState, a: number, b: number): boolean { return a < 1000 && b < 1000 && campsAtWar(s, a, b); }
 export function airShare(s: GameState, r: number, sd: number): number {

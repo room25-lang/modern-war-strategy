@@ -1,7 +1,7 @@
 import type { Facility, GameState, GenCat, Stock, UnitKind } from '../types';
 import { W, isAdj } from '../world';
 import { CFG } from '../config';
-import { C, atWar, campsAtWar, chance, enemyCampIdle, findPath, friendlyNode, hostileNode, landAt, adAt, sameSide, seaOK, side, hopDays } from './rules';
+import { C, amphibZones, atWar, campsAtWar, chance, enemyCampIdle, findPath, friendlyNode, hostileNode, landAt, adAt, sameSide, seaOK, hopDays } from './rules';
 import { addTension, capBudget, declareWar, engage, exitWar, maxMil, news, peaceAccept, wName } from './sim';
 
 export type Res = { ok: boolean; msg: string };
@@ -153,8 +153,11 @@ export function orderTo(s: GameState, id: string, from: number, to: number): Res
     const A = W.nodes[from], B = W.nodes[to];
     if (!A.port || !B.zones.length) return ng('隣り合った拠点か、海を挟んだ港どうしでないと攻められません');
     const zs = A.zones.filter((z) => B.zones.includes(z) || B.zones.some((t) => W.zones[z].adj.includes(t)));
-    if (!zs.length) return ng('上陸できるのは、同じ海域か隣の海域に面した拠点だけです');
-    if (!zs.some((z) => seaOK(s, z, side(s, id)))) return ng('上陸には、その海域の制海が必要です');
+    if (!amphibZones(s, id, from, to)) {
+      if (!zs.length) return ng(CFG.blueWater.includes(id) ? `上陸できるのは、制海の取れた海を${CFG.blueWaterHops}海域以内でたどれる港だけです` : '上陸できるのは、同じ海域か隣の海域に面した拠点だけです');
+      return ng('上陸には、その海域の制海が必要です');
+    }
+    void seaOK;
     amphib = true;
   }
   const C_ = C(s, id);
