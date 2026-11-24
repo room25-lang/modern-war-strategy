@@ -52,7 +52,7 @@ async function boot() {
   const ui = new UI(host);
   ui.mount();
   const tour = new Tour(ui); ui.tour = () => tour.start();
-  (window as unknown as { __mws: unknown }).__mws = { host, ui, A };
+  (window as unknown as { __mws: unknown }).__mws = { host, ui, A, step, createGame, updateCamps, computeSupply };
 
   // ---------- 開始画面 ----------
   function setupScreen() {

@@ -12,6 +12,7 @@ export interface ViewState {
   hover: number | null;
   targeting: null | { kind: 'attack' | 'strike' | 'goal'; from?: number };
   cand: { from: number; attack: number[]; move: number[] } | null;
+  spectator?: boolean;   // 観戦（動画用）：霧・駒・自国の強調なし、全部の攻勢を表示
 }
 
 const OCEAN = '#3B4B5C';
@@ -73,11 +74,12 @@ export class MapView {
     this.canvas.style.width = innerWidth + 'px'; this.canvas.style.height = innerHeight + 'px';
     this.clamp();
   }
-  minZ() { return innerHeight / W.H; }
+  spectator = false;
+  minZ() { return this.spectator ? innerWidth / W.W : innerHeight / W.H; }
   clamp() {
     this.cam.z = Math.max(this.minZ(), Math.min(7, this.cam.z));
     const half = innerHeight / 2 / this.cam.z;
-    this.cam.y = Math.max(half, Math.min(W.H - half, this.cam.y));
+    this.cam.y = this.spectator ? W.H / 2 : Math.max(half, Math.min(W.H - half, this.cam.y));
     this.cam.x = ((this.cam.x % W.W) + W.W) % W.W;
   }
   toWorld(sx: number, sy: number): [number, number] { return [(sx - innerWidth / 2) / this.cam.z + this.cam.x, (sy - innerHeight / 2) / this.cam.z + this.cam.y]; }
@@ -101,7 +103,7 @@ export class MapView {
 
   // 国の塗り（所有が変わったときだけ描き直す）
   rebuild(s: GameState, v: ViewState) {
-    const key = v.mode + '|' + s.nodes.map((n) => n.ctrl + n.owner).join(',') + '|' + (v.mode === 'camp' ? Object.values(s.countries).map((c) => c.camp + (c.engaged ? 'e' : '')).join('') + s.wars.join(';') : '');
+    const key = (v.spectator ? 'S' : '') + v.mode + '|' + s.nodes.map((n) => n.ctrl + n.owner).join(',') + '|' + (v.mode === 'camp' ? Object.values(s.countries).map((c) => c.camp + (c.engaged ? 'e' : '')).join('') + s.wars.join(';') : '');
     if (key === this.lastKey) return;
     this.lastKey = key;
     const g = this.tex.getContext('2d')!;
@@ -122,7 +124,7 @@ export class MapView {
     // 自国（いま支配している州）を金色で縁取る
     const mine = new Path2D(); let any = false;
     for (const [n, p] of this.provPaths) if (s.nodes[n].ctrl === s.player) { mine.addPath(p); any = true; }
-    if (any) { g.save(); g.clip(mine); g.strokeStyle = 'rgba(240,199,94,0.45)'; g.lineWidth = 9; g.stroke(mine); g.restore(); g.strokeStyle = '#F0C75E'; g.lineWidth = 2.4; g.stroke(mine); }
+    if (any && !v.spectator) { g.save(); g.clip(mine); g.strokeStyle = 'rgba(240,199,94,0.45)'; g.lineWidth = 9; g.stroke(mine); g.restore(); g.strokeStyle = '#F0C75E'; g.lineWidth = 2.4; g.stroke(mine); }
   }
   provBoxXYWH(n: number): [number, number, number, number] { const b = this.provBox.get(n)!; return [b[0], b[1], b[2] - b[0], b[3] - b[1]]; }
   stripeCache = new Map<string, CanvasPattern>();
@@ -133,7 +135,8 @@ export class MapView {
     p = g.createPattern(c, 'repeat')!; this.stripeCache.set(color, p); return p;
   }
   // 見えていない敵地を暗くする
-  rebuildFog(s: GameState) {
+  rebuildFog(s: GameState, spectator = false) {
+    if (spectator) { if (this.fogKey !== 'S') { this.fog.getContext('2d')!.clearRect(0, 0, this.fog.width, this.fog.height); this.fogKey = 'S'; } return; }
     const key = s.day + '|' + s.visibleNow.length;
     if (key === this.fogKey) return; this.fogKey = key;
     const g = this.fog.getContext('2d')!; g.setTransform(0.5, 0, 0, 0.5, 0, 0);
@@ -148,7 +151,7 @@ export class MapView {
 
   draw(s: GameState, v: ViewState, frac: number) {
     const g = this.ctx; const z = this.cam.z;
-    this.rebuild(s, v); this.rebuildFog(s);
+    this.rebuild(s, v); this.rebuildFog(s, v.spectator);
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.fillStyle = '#2B3743'; g.fillRect(0, 0, innerWidth, innerHeight);
     for (const k of [-1, 0, 1]) {
@@ -214,8 +217,11 @@ export class MapView {
     for (const [a1, b1] of W.edges) {
       const ca = s.nodes[a1].ctrl, cb = s.nodes[b1].ctrl;
       const fa = sameSide(s, ca, s.player), fb = sameSide(s, cb, s.player);
-      if (fa === fb) continue;
-      if (!atWar(s, s.player, fa ? cb : ca) && !campsAtWar(s, C(s, s.player).camp, C(s, fa ? cb : ca).camp)) continue;
+      if (v.spectator) { if (!atWar(s, ca, cb)) continue; }
+      else {
+        if (fa === fb) continue;
+        if (!atWar(s, s.player, fa ? cb : ca) && !campsAtWar(s, C(s, s.player).camp, C(s, fa ? cb : ca).camp)) continue;
+      }
       const [x1, y1] = this.toScreen(W.nodes[a1].x, W.nodes[a1].y), [x2, y2] = this.toScreen(W.nodes[b1].x, W.nodes[b1].y);
       if (Math.abs(x1 - x2) > innerWidth || (!this.onScreen(x1, y1) && !this.onScreen(x2, y2))) continue;
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, L = Math.hypot(x2 - x1, y2 - y1) || 1;
@@ -226,8 +232,8 @@ export class MapView {
     // 攻勢の矢印
     for (const o of s.orders) {
       const mine = o.owner === s.player, ally = sameSide(s, o.owner, s.player);
-      if (!mine && !ally && !(s.visibleNow.includes(o.from) || s.visibleNow.includes(o.to))) continue;
-      const col = mine ? '#F2F2F2' : ally ? '#A9C7EC' : '#E8806F';
+      if (!v.spectator && !mine && !ally && !(s.visibleNow.includes(o.from) || s.visibleNow.includes(o.to))) continue;
+      const col = v.spectator ? C(s, o.owner).color : mine ? '#F2F2F2' : ally ? '#A9C7EC' : '#E8806F';
       this.arrow(W.nodes[o.from].x, W.nodes[o.from].y, W.nodes[o.to].x, W.nodes[o.to].y, col, 7, o.progress / 100);
     }
     if (v.drag) { const n = W.nodes[v.drag.from]; const [wx, wy] = this.toWorld(v.drag.x, v.drag.y); this.arrow(n.x, n.y, wx, wy, 'rgba(242,242,242,0.8)', 6, 0); }
@@ -265,11 +271,11 @@ export class MapView {
     g.textBaseline = 'middle';
     for (const n of W.nodes) {
       const [x, y] = this.toScreen(n.x, n.y); if (!this.onScreen(x, y)) continue;
-      const showName = n.capital ? z > 0.45 : n.ind >= 3 ? z > 0.9 : z > 1.5;
+      const showName = v.spectator ? n.capital && C(s, n.country).major : n.capital ? z > 0.45 : n.ind >= 3 ? z > 0.9 : z > 1.5;
       if (showName) this.label(n.name, x + 9, y, n.capital ? 15 : 13, true);
-      this.chips(s, n.id, x, y + 11);
+      if (!v.spectator) this.chips(s, n.id, x, y + 11);
     }
-    if (v.overlay === 'sea' || z > 0.8) this.fleetChips(s);
+    if (!v.spectator && (v.overlay === 'sea' || z > 0.8)) this.fleetChips(s);
     this.drawFx(now);
   }
 
