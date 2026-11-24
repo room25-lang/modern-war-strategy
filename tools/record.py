@@ -25,7 +25,7 @@ OVERLAY = """
   #rec .rw small{display:block;font-size:15px;font-weight:400;color:#CFCFD1}
   #rec .rc{position:absolute;left:50%;bottom:58px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
   #rec .rc div{padding:6px 16px;border-radius:6px;background:rgba(24,25,27,.92);border-left:5px solid #E8806F;font-size:19px;font-weight:700;white-space:nowrap}
-  #rec .rc div.g{border-left-color:#9CCB8E} #rec .rc div.w{border-left-color:#E8B36A}
+  #rec .rc div.hg{border:2px solid #F0C75E;border-left-width:2px;font-size:30px;padding:12px 26px;text-align:center} #rec .rc div.hg small{display:block;font-size:18px;font-weight:400;color:#E6E6E6} #rec .rc div.g{border-left-color:#9CCB8E} #rec .rc div.w{border-left-color:#E8B36A}
   #rec .rl{position:absolute;left:28px;bottom:24px;display:flex;gap:14px;font-size:15px}
   #rec .rl span{display:flex;align-items:center;gap:6px} #rec .rl i{width:18px;height:12px;display:inline-block;border:1px solid rgba(0,0,0,.4)}`;
   document.head.appendChild(st);
@@ -39,6 +39,7 @@ PORTRAIT = """
 #rec .rw small{font-size:24px}
 #rec .rc{bottom:250px;width:960px}
 #rec .rc div{white-space:normal;text-align:center;font-size:30px;padding:10px 20px}
+#rec .rc div.hg{font-size:46px;padding:18px 30px} #rec .rc div.hg small{font-size:26px}
 #rec .rl{left:40px;right:40px;bottom:70px;flex-wrap:wrap;justify-content:center;font-size:24px;gap:10px 22px}
 #rec .rl i{width:28px;height:18px}
 """
@@ -75,11 +76,18 @@ async def main():
               const wk = Math.min(104, Math.floor(s.day / 7) + 1);
               document.querySelector('#rec .rw').innerHTML = `第${{wk}}週<small>${{s.phase === 'tension' ? '緊張期' : '戦争中'}}</small>`;
               const fresh = s.news.slice(window.__seen); window.__seen = s.news.length;
-              const big = fresh.filter((n) => /開戦|降伏|講和|参戦|首都/.test(n.text) && !/中小国陣営/.test(n.text))
+              const big = fresh.filter((n) => /開戦|降伏|講和|宣戦|裏切り|首都/.test(n.text) && !/中小国陣営/.test(n.text))
                 .filter((n) => s.majors.some((m) => n.text.includes(s.countries[m].name)));
-              for (const n of big) window.__cap.push({{ t: n.text.replace(/^【開戦】/, '開戦：'), k: /降伏|開戦/.test(n.text) ? '' : /講和/.test(n.text) ? 'w' : 'g', f: {i} }});
+              for (const n of big) window.__cap.push({{ t: n.text.replace(/^【開戦】/, '開戦：').replace(/^【宣戦】/, '').replace(/^【裏切り】/, '裏切り：'), k: /降伏|開戦|宣戦|裏切り/.test(n.text) ? '' : /講和/.test(n.text) ? 'w' : 'g', f: {i} }});
               window.__cap = window.__cap.filter((c) => {i} - c.f < 55).slice(-2);
-              document.querySelector('#rec .rc').innerHTML = window.__cap.map((c) => `<div class="${{c.k}}">${{c.t}}</div>`).join('');
+              let html = window.__cap.map((c) => `<div class="${{c.k}}">${{c.t}}</div>`).join('');
+              if ({i} >= {frames} - 50) {{
+                const tot = s.nodes.reduce((a, n, j) => a + 1, 0); const v = {{}}; let all = 0;
+                for (let j = 0; j < s.nodes.length; j++) {{ const k = s.nodes[j].ctrl; v[k] = (v[k] ?? 0) + 1; all++; }}
+                const top = Object.entries(v).sort((a, b) => b[1] - a[1])[0];
+                html = `<div class="hg">覇権国：${{s.countries[top[0]].name}}<small>世界の拠点の${{Math.round(top[1] / all * 100)}}%を支配</small></div>`;
+              }}
+              document.querySelector('#rec .rc').innerHTML = html;
             }}""")
             await pg.evaluate("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))")
             await pg.screenshot(path=f'{OUT}/{i:04d}.jpg', type='jpeg', quality=88)

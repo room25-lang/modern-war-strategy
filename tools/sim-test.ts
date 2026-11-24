@@ -40,3 +40,6 @@ const terr = (id: string) => W.nodes.reduce((a, n, i) => a + (s.nodes[i].ctrl ==
 const base0 = (id: string) => (W.nodesByCountry[id] ?? []).reduce((a, n) => a + W.nodes[n].ind + 1, 0);
 console.log('TERRITORY:', s.majors.map((m) => `${s.countries[m].name}${Math.round(terr(m) / base0(m) * 100)}%`).join(' '));
 console.log('BETRAYALS:', events.filter((e) => e.kind === 'war').length, 'wars:', s.wars.length);
+const tot = W.nodes.reduce((a, n) => a + n.ind + 1, 0);
+const shares = Object.keys(s.countries).map((id) => [id, terr(id) / tot] as [string, number]).sort((a, b) => b[1] - a[1]);
+console.log('TOP:', shares.slice(0, 3).map(([id, v]) => `${s.countries[id].name}${Math.round(v * 100)}%`).join(' '), 'ANNEX:', s.news.filter((n) => n.text.includes('併合')).length);

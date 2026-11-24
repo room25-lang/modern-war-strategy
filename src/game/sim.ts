@@ -18,9 +18,18 @@ export function news(s: GameState, text: string, kind: 'info' | 'warn' | 'bad' |
 const mine = (s: GameState, id: string) => id === s.player || sameSide(s, id, s.player);
 
 // ===================== 1日進める =====================
+// 世界に占める領土の割合（大国ほど戦力に勢いがつく）
+export const share: Record<string, number> = {};
+function updateShare(s: GameState) {
+  let tot = 0; const v: Record<string, number> = {};
+  for (let n = 0; n < W.nodes.length; n++) { const x = W.nodes[n].ind + 1; tot += x; v[s.nodes[n].ctrl] = (v[s.nodes[n].ctrl] ?? 0) + x; }
+  for (const k of Object.keys(share)) delete share[k];
+  for (const [k, x] of Object.entries(v)) share[k] = x / tot;
+}
 export function step(s: GameState) {
   if (s.over) return;
   s.day++;
+  if (s.day % 7 === 1 || !Object.keys(share).length) updateShare(s);
   updateCamps(s);
   updateTension(s);
   runStrikes(s);
@@ -411,7 +420,8 @@ function landPower(s: GameState, u: Unit, attack: boolean, node: number): number
   const air = 0.75 + 0.5 * airShare(s, W.nodes[node].region, side(s, u.owner));
   const init = c.initiatorDays > 0 ? (attack ? 1.15 : 1) : 1;
   const bonus = c.ai && c.major ? CFG.diff[s.difficulty].bonus : 1;
-  return u.strength / 100 * genF(c, 'armor') * doc * (0.4 + 0.6 * sup) * air * init * Math.sqrt(bonus);
+  const momentum = 1 + Math.min(1.2, Math.max(0, (share[u.owner] ?? 0) - 0.05) * 3.2);
+  return u.strength / 100 * genF(c, 'armor') * doc * (0.4 + 0.6 * sup) * air * init * Math.sqrt(bonus) * momentum;
 }
 function groundCombat(s: GameState) {
   for (const o of [...s.orders]) resolveOrder(s, o);
@@ -469,14 +479,32 @@ function capture(s: GameState, o: Order, att: Unit[]) {
   news(s, `${A.name}が${W.nodes[n].name}（${L.name}）を${newCtrl === o.owner ? '占領' : '奪還'}しました`, kind);
   if (W.nodes[n].capital && n === C(s, ns.owner).capital) capitalFallen(s, ns.owner, o.owner);
 }
+// 首都を落とされた国は降伏し、残った領土をすべて落とした国に併合される（覇権国が生まれやすい）
 function capitalFallen(s: GameState, id: string, by: string) {
+  const c = C(s, id); const B = C(s, by);
+  if (c.major && c.opinion >= 60 && (W.nodesByCountry[id] ?? []).filter((n) => s.nodes[n].ctrl === id).length >= 12) {
+    news(s, `${c.name}は首都を失いましたが、戦いを続けています`, 'warn'); return;
+  }
+  news(s, `【併合】${c.name}は首都を失って降伏し、${B.name}に併合されました`, mine(s, id) ? 'bad' : mine(s, by) ? 'good' : 'info');
+  if (id === s.player) { endGame(s, true); return; }
+  annex(s, id, by);
+}
+export function annex(s: GameState, id: string, by: string) {
   const c = C(s, id);
-  if (c.opinion < 30 || !c.major) {
-    news(s, `${c.name}は首都を失い、降伏しました`, mine(s, id) ? 'bad' : 'good');
-    if (id === s.player) { endGame(s, true); return; }
-    exitWar(s, id, by, true);
-    c.capitulated = true;
-  } else news(s, `${c.name}は首都を失いましたが、戦いを続けています`, 'warn');
+  for (let n = 0; n < W.nodes.length; n++) {
+    const ns = s.nodes[n];
+    if (ns.ctrl === id) { ns.ctrl = by; ns.owner = by; }
+    else if (ns.owner === id) ns.owner = ns.ctrl;
+  }
+  s.units = s.units.filter((u) => u.owner !== id);
+  s.orders = s.orders.filter((o) => o.owner !== id);
+  s.strikes = s.strikes.filter((x) => x.owner !== id);
+  // 奪った在庫の一部を得る
+  const B = C(s, by);
+  for (const k of ['cruise', 'ballistic', 'interceptor', 'drone'] as const) B.stock[k] += c.stock[k] * 0.3;
+  B.gdpBase += c.gdpBase * 0.5; B.opinion = Math.min(100, B.opinion + (c.major ? 12 : 3));
+  c.capitulated = true; c.engaged = false;
+  for (const o of Object.values(s.countries)) { delete o.alignment[id]; o.basesOf = o.basesOf.filter((x) => x !== id); }
 }
 
 // ===================== 講和 =====================
@@ -516,10 +544,25 @@ export function peaceSeverity(s: GameState, demander: string, target: string): n
 // 相手がこの講和を受けるか（type: ask=自分が抜ける, demand=相手が抜ける）
 export function peaceAccept(s: GameState, from: string, to: string, type: 'ask' | 'demand'): boolean {
   const hard = s.difficulty === 'hard' ? 0.05 : s.difficulty === 'easy' ? -0.05 : 0;
-  if (type === 'ask') return exhaustion(s, to) > 0.22 + hard || goalProgress(s, to) > 0.3 || C(s, from).opinion < CFG.opinionForcedPeace;
+  if (type === 'ask') {
+    if ((share[to] ?? 0) > 0.16 && C(s, to).ai) return exhaustion(s, to) > 0.55; // 大国は弱い相手の講和をなかなか受けない
+    return exhaustion(s, to) > 0.22 + hard || goalProgress(s, to) > 0.3 || C(s, from).opinion < CFG.opinionForcedPeace;
+  }
   return exhaustion(s, to) - peaceSeverity(s, from, to) * 0.5 > 0.45 + hard;
 }
 function peaceChecks(s: GameState) {
+  // 本土の大半を失った国は降伏し、いちばん多く押さえている国に併合される
+  for (const c of Object.values(s.countries)) {
+    if (c.capitulated) continue;
+    const home = W.nodesByCountry[c.id] ?? []; if (!home.length) continue;
+    const held = home.filter((n) => s.nodes[n].ctrl === c.id).length;
+    if (held / home.length >= (c.major ? 0.4 : 0.5)) continue;
+    const by: Record<string, number> = {}; for (const n of home) { const k = s.nodes[n].ctrl; if (k !== c.id && atWar(s, k, c.id)) by[k] = (by[k] ?? 0) + 1; }
+    const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0]; if (!top) continue;
+    news(s, `【併合】${c.name}は本土の大半を失って降伏し、${C(s, top[0]).name}に併合されました`, mine(s, c.id) ? 'bad' : mine(s, top[0]) ? 'good' : 'info');
+    if (c.id === s.player) { endGame(s, true); return; }
+    annex(s, c.id, top[0]);
+  }
   for (const c of Object.values(s.countries)) {
     if (!c.engaged || c.capitulated) continue;
     // 世論の限界による強制
@@ -628,7 +671,7 @@ function economy(s: GameState, c: Country) {
   let ind = 0;
   for (let n = 0; n < W.nodes.length; n++) {
     const ns = s.nodes[n];
-    if (ns.ctrl === c.id) ind += W.nodes[n].ind * ns.health.ind / 100 * (ns.owner === c.id ? 1 : 0.5);
+    if (ns.ctrl === c.id) ind += W.nodes[n].ind * ns.health.ind / 100 * (ns.owner === c.id ? 1 : 0.85);
   }
   let gdp = c.gdpBase * ind / Math.max(1, c.indBase);
   const ports = (W.nodesByCountry[c.id] ?? []).filter((n) => W.nodes[n].port && s.nodes[n].ctrl === c.id);

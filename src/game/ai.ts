@@ -43,7 +43,7 @@ export function aiWarGoal(s: GameState, c: Country) {
     if (!(atWar(s, c.id, o) || enemyCampIdle(s, c.id, o))) continue;
     const d = Math.min(...mine.map((m) => nodeKm(m, n)));
     if (d > 2400) continue;
-    cand.push([n, (W.nodes[n].ind + 1) * 1000 / (d + 200)]);
+    cand.push([n, (W.nodes[n].ind + 1 + (W.nodes[n].capital ? 6 : 0)) * 1000 / (d + 200)]);
   }
   cand.sort((a, b) => b[1] - a[1]);
   c.warGoal = cand.slice(0, 4 + Math.floor(rand(0, 4))).map((x) => x[0]);
@@ -53,12 +53,15 @@ export function aiWarGoal(s: GameState, c: Country) {
 export function aiExpand(s: GameState, c: Country) {
   if (s.phase !== 'war' || c.capitulated || (!c.major && !c.fights)) return;
   if (exhaustion(s, c.id) > 0.5 || c.opinion < 38 || (c.peace['_'] ?? 0) > s.day) return;
-  const foes = s.majors.filter((m) => atWar(s, c.id, m)).length;
-  if (foes >= (c.major ? 2 : 1)) return;
-  const p = c.major ? ({ easy: 0.15, normal: 0.28, hard: 0.4 } as Record<string, number>)[s.difficulty] : 0.06;
-  if (!chance(p)) return;
   const pow = (id: string) => s.units.reduce((a, u) => a + (u.owner === id && u.kind === 'land' ? u.strength / 100 * genF(C(s, id), 'armor') : 0), 0);
   const myPow = pow(c.id);
+  const alive = s.majors.filter((m) => !C(s, m).capitulated);
+  const avg = alive.reduce((a, m) => a + pow(m), 0) / Math.max(1, alive.length);
+  const strong = myPow / Math.max(1, avg); // 1より大きいほど大国
+  const foes = Object.values(s.countries).filter((o) => atWar(s, c.id, o.id)).length;
+  if (foes >= (c.major ? Math.min(5, 2 + Math.floor(strong)) : 1)) return;
+  const p = c.major ? ({ easy: 0.18, normal: 0.32, hard: 0.45 } as Record<string, number>)[s.difficulty] * Math.min(2.5, Math.max(0.6, strong)) : 0.03;
+  if (!chance(p)) return;
   const front = new Map<string, number>();
   for (let n = 0; n < W.nodes.length; n++) {
     if (s.nodes[n].ctrl !== c.id) continue;
@@ -73,7 +76,7 @@ export function aiExpand(s: GameState, c: Country) {
     // 相手の陣営が助けに来る分も見込む
     if (T.camp >= 0 && T.camp !== c.camp) for (const m of s.majors) if (m !== t && C(s, m).camp === T.camp) tp += pow(m) * 0.4;
     const betray = c.camp >= 0 && T.camp === c.camp;
-    const req = betray ? 1.8 : T.camp < 0 ? 1.3 : 1.6;
+    const req = (betray ? 1.8 : T.camp < 0 ? 1.3 : 1.6) / Math.min(1.4, Math.max(1, strong * 0.8));
     const ratio = myPow / Math.max(0.5, tp) * rand(0.85, 1.15);
     if (ratio < req) continue;
     const v = (gain + T.indBase * 0.3) * Math.min(3, ratio / req) * (betray ? 0.8 : 1);
@@ -91,9 +94,9 @@ export function aiWeekly(s: GameState, c: Country) {
   else A.setBudget(s, c.id, 38, 40, 22);
   const myUnits = s.units.filter((u) => u.owner === c.id);
   const count = (k: string) => myUnits.filter((u) => u.kind === k).length;
-  if ((atWarNow || c.warMode || campWar) && c.queue.length < 3) {
+  if ((atWarNow || c.warMode || campWar) && c.queue.length < (c.gdp > 90 ? 5 : 3)) {
     if (c.stock.interceptor < c.stockInit.interceptor * 0.4 && c.stockInit.interceptor > 0) A.enqueue(s, c.id, 'ad');
-    else if (count('land') < c.landInit * 1.5) A.enqueue(s, c.id, 'land');
+    else if (count('land') < c.landInit * 1.5 * Math.max(1, c.gdp / Math.max(1, c.gdpBase))) A.enqueue(s, c.id, 'land');
     else if (c.major && chance(0.4)) A.enqueue(s, c.id, 'air');
     else if (c.major && chance(0.3) && (W.nodesByCountry[c.id] ?? []).some((n) => W.nodes[n].port)) A.enqueue(s, c.id, 'fleet');
     else A.enqueue(s, c.id, 'land');
@@ -177,7 +180,7 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
     for (const e of W.adj[n]) {
       if (!hostileNode(s, c.id, e.to) || targeted.has(e.to)) continue;
       if (!atWar(s, c.id, s.nodes[e.to].ctrl) && !c.major) continue;
-      const ratio = myP / estPower(s, e.to, noise) * (c.warGoal.includes(e.to) ? 1.4 : 1) * (1 + W.nodes[e.to].ind * 0.04) * (s.nodes[e.to].owner !== s.nodes[e.to].ctrl ? 1.2 : 1);
+      const ratio = myP / estPower(s, e.to, noise) * (c.warGoal.includes(e.to) ? 1.4 : 1) * (1 + W.nodes[e.to].ind * 0.04) * (s.nodes[e.to].owner !== s.nodes[e.to].ctrl ? 1.2 : 1) * (W.nodes[e.to].capital ? 1.3 : 1);
       if (ratio > bs) { bs = ratio; best = e.to; }
     }
     if (best >= 0 && bs >= thr * (keep ? 1 : 1.2)) { A.orderTo(s, c.id, n, best); targeted.add(best); }

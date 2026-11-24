@@ -16,7 +16,7 @@ export const CFG = {
   // 防空の1日あたり迎撃能力
   adUnitCap: 60, adSiteCap: 50, adRegionCap: 8,
   // 地上戦
-  combatLoss: 7, progressRate: 20, landSpeedKm: 420,
+  combatLoss: 7, progressRate: 26, landSpeedKm: 460,
   // 世論
   opinionWarDrift: -0.05, opinionPeaceTarget: 55,
   opinionNoMobilize: 40, opinionBudgetCap: 25, opinionForcedPeace: 12,
