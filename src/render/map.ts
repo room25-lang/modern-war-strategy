@@ -119,6 +119,10 @@ export class MapView {
     g.lineJoin = 'round';
     g.strokeStyle = 'rgba(20,18,16,0.28)'; g.lineWidth = 0.7; g.stroke(this.provEdges);
     g.strokeStyle = 'rgba(16,14,12,0.75)'; g.lineWidth = 1.4; g.stroke(this.outline);
+    // 自国（いま支配している州）を金色で縁取る
+    const mine = new Path2D(); let any = false;
+    for (const [n, p] of this.provPaths) if (s.nodes[n].ctrl === s.player) { mine.addPath(p); any = true; }
+    if (any) { g.save(); g.clip(mine); g.strokeStyle = 'rgba(240,199,94,0.45)'; g.lineWidth = 9; g.stroke(mine); g.restore(); g.strokeStyle = '#F0C75E'; g.lineWidth = 2.4; g.stroke(mine); }
   }
   provBoxXYWH(n: number): [number, number, number, number] { const b = this.provBox.get(n)!; return [b[0], b[1], b[2] - b[0], b[3] - b[1]]; }
   stripeCache = new Map<string, CanvasPattern>();
@@ -254,7 +258,7 @@ export class MapView {
         g.beginPath(); g.arc(x, y, 9, 0, 7); g.fill();
       }
       if (P.warGoal.includes(n.id)) { g.strokeStyle = '#E8C063'; g.lineWidth = 2.5; g.beginPath(); g.arc(x, y, 9, 0, 7); g.stroke(); }
-      if (n.capital) this.star(x, y, 6.5); else { g.fillStyle = '#F2F2F2'; g.strokeStyle = '#1E1F21'; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, z > 1 ? 4 : 3, 0, 7); g.fill(); g.stroke(); }
+      if (n.capital) this.star(x, y, ns.ctrl === s.player ? 9 : 6.5, ns.ctrl === s.player); else { g.fillStyle = '#F2F2F2'; g.strokeStyle = '#1E1F21'; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, z > 1 ? 4 : 3, 0, 7); g.fill(); g.stroke(); }
       if (v.selected === n.id) { g.strokeStyle = '#FFFFFF'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, 12 + Math.sin(now / 200) * 1.5, 0, 7); g.stroke(); }
     }
     // 名前と部隊チップ
@@ -298,10 +302,10 @@ export class MapView {
     g.fillStyle = col; g.beginPath(); g.moveTo(c + hx * 10, d + hy * 10); g.lineTo(c - hy * 9 - hx * 4, d + hx * 9 - hy * 4); g.lineTo(c + hy * 9 - hx * 4, d - hx * 9 - hy * 4); g.closePath(); g.fill();
     g.globalAlpha = 1;
   }
-  star(x: number, y: number, r: number) {
+  star(x: number, y: number, r: number, gold = false) {
     const g = this.ctx; g.beginPath();
     for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? r * 0.45 : r; g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
-    g.closePath(); g.fillStyle = '#F2F2F2'; g.strokeStyle = '#1E1F21'; g.lineWidth = 1.5; g.fill(); g.stroke();
+    g.closePath(); g.fillStyle = gold ? '#F0C75E' : '#F2F2F2'; g.strokeStyle = '#1E1F21'; g.lineWidth = 1.5; g.fill(); g.stroke();
   }
   label(t: string, x: number, y: number, size: number, bold: boolean) {
     const g = this.ctx; g.font = `${bold ? 700 : 600} ${size}px 'Noto Sans JP', sans-serif`; g.textAlign = 'left';
@@ -324,10 +328,10 @@ export class MapView {
   }
   counterBody(g: CanvasRenderingContext2D, x: number, y: number, o: { kind: 'land' | 'ad'; n: string; str: number; color: string; style: 'me' | 'ally' | 'enemy' | 'unknown'; busy?: boolean }): number {
     const w = 50, h = 30;
-    const border = o.style === 'me' ? '#F2F2F2' : o.style === 'ally' ? '#8DB0DA' : o.style === 'enemy' ? '#E0606A' : '#B5B6B9';
-    g.fillStyle = o.style === 'enemy' ? 'rgba(58,26,30,0.95)' : 'rgba(24,25,27,0.95)'; g.fillRect(x, y, w, h);
+    const border = o.style === 'me' ? '#F0C75E' : o.style === 'ally' ? '#8DB0DA' : o.style === 'enemy' ? '#E0606A' : '#B5B6B9';
+    g.fillStyle = o.style === 'enemy' ? 'rgba(58,26,30,0.95)' : o.style === 'me' ? 'rgba(30,44,68,0.97)' : 'rgba(24,25,27,0.95)'; g.fillRect(x, y, w, h);
     if (o.style === 'unknown') { g.setLineDash([4, 3]); g.strokeStyle = border; g.lineWidth = 1.5; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.setLineDash([]); }
-    else { g.fillStyle = o.color; g.fillRect(x, y, w, 4); g.strokeStyle = border; g.lineWidth = o.style === 'me' ? 2 : 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); }
+    else { g.fillStyle = o.style === 'me' ? '#F0C75E' : o.color; g.fillRect(x, y, w, 4); g.strokeStyle = border; g.lineWidth = o.style === 'me' ? 2.5 : 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); }
     // 兵種の記号（陸＝四角に×、防空＝半円）
     g.strokeStyle = '#E6E6E6'; g.lineWidth = 1.3; const ix = x + 5, iy = y + 9;
     if (o.kind === 'land') { g.strokeRect(ix, iy, 16, 11); g.beginPath(); g.moveTo(ix, iy); g.lineTo(ix + 16, iy + 11); g.moveTo(ix + 16, iy); g.lineTo(ix, iy + 11); g.stroke(); }

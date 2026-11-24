@@ -11,9 +11,23 @@ import { MapView, type ViewState } from './render/map';
 import { UI } from './ui/ui';
 import { flagSVG } from './ui/flags';
 import { Tour } from './ui/tour';
-import { sfx } from './audio';
+import { sfx, startMusic } from './audio';
 
 const BASE = import.meta.env.BASE_URL;
+const DOCS = [
+  { name: 'dl', key: 'land', label: '陸：地上戦の方針', opts: [
+    { v: 'mobile', t: '機動打撃', eff: '攻める力+20%、守る力−5%。敵の弱い所へ素早く攻め込む', for: '向く場面：陸続きの国境で、こちらから攻めたいとき' },
+    { v: 'depth', t: '縦深防御', eff: '守る力+25%、攻める力−5%。陣地で敵をすり減らす', for: '向く場面：攻められる側に回りそうなとき、兵力が少ないとき' }] },
+  { name: 'ds', key: 'sea', label: '海：艦隊の方針', opts: [
+    { v: 'carrier', t: '空母打撃群', eff: '艦隊の力+20%、近くの空の戦いも支える', for: '向く場面：遠くの海まで出ていき、制海を取りたいとき' },
+    { v: 'sub', t: '潜水艦・対艦ミサイル', eff: '敵艦隊への損害+30%。自分の近海に敵を寄せつけない', for: '向く場面：島国や沿岸国で、近海を守りたいとき' }] },
+  { name: 'da', key: 'air', label: '空：航空の方針', opts: [
+    { v: 'air', t: '航空優勢', eff: '航空隊の力+25%。戦闘機で空を取る', for: '向く場面：戦闘機の世代が高く、空で押したいとき' },
+    { v: 'ground', t: '地上配備防空', eff: '防空の迎撃能力+35%、防空も制空に数える', for: '向く場面：ミサイル攻撃を受けやすく、守りを固めたいとき' }] },
+  { name: 'di', key: 'intel', label: '情報：索敵の方針', opts: [
+    { v: 'recon', t: '索敵重視', eff: '衛星が2日ごとに撮影、ドローンが1拠点先まで見える', for: '向く場面：敵の位置を正確に知って、先に撃ちたいとき' },
+    { v: 'stealth', t: '秘匿重視', eff: '敵の見積もりが±40%ぶれ、衛星に35%見落とされる。サイバー成功率も上がる', for: '向く場面：兵力を隠して、敵に読ませたくないとき' }] },
+];
 const speed = Number(new URLSearchParams(location.search).get('speed') ?? 1) || 1;
 
 async function boot() {
@@ -57,25 +71,23 @@ async function boot() {
           <fieldset><legend>難易度</legend>${radio('diff', 'easy', 'やさしい', false)}${radio('diff', 'normal', 'ふつう', true)}${radio('diff', 'hard', '難しい', false)}</fieldset>
           <fieldset><legend>国どうしの関係</legend>${radio('rel', 'real', '現実に近い', true)}${radio('rel', 'random', 'ランダム', false)}</fieldset>
         </div>
-        <fieldset><legend>ドクトリン（開始時に決め、ゲーム中は変えられません）</legend><div class="docs">
-          <div>陸：${radio('dl', 'mobile', '機動打撃', d.land === 'mobile')}${radio('dl', 'depth', '縦深防御', d.land === 'depth')}</div>
-          <div>海：${radio('ds', 'carrier', '空母打撃群', d.sea === 'carrier')}${radio('ds', 'sub', '潜水艦・対艦ミサイル', d.sea === 'sub')}</div>
-          <div>空：${radio('da', 'air', '航空優勢', d.air === 'air')}${radio('da', 'ground', '地上配備防空', d.air === 'ground')}</div>
-          <div>情報：${radio('di', 'recon', '索敵重視', d.intel === 'recon')}${radio('di', 'stealth', '秘匿重視', d.intel === 'stealth')}</div>
-        </div></fieldset>
+        <fieldset class="docf"><legend>ドクトリン（戦い方の方針。開始時に決め、ゲーム中は変えられません）</legend>
+          <p class="muted">分野ごとに2つから1つを選びます。どちらが正解ということはなく、得意な戦い方が変わります。「標準」はこの国にもともと合っている方です。迷ったら標準のままで大丈夫です。</p>
+          <div class="docs">${DOCS.map((cat) => `<div class="dcat"><h4>${cat.label}</h4>${cat.opts.map((o) => `<label class="dopt"><input type="radio" name="${cat.name}" value="${o.v}" ${(d as unknown as Record<string, string>)[cat.key] === o.v ? 'checked' : ''}><span><b>${o.t}${(d as unknown as Record<string, string>)[cat.key] === o.v ? '<em>標準</em>' : ''}</b><small>${o.eff}</small><small class="for">${o.for}</small></span></label>`).join('')}</div>`).join('')}</div>
+        </fieldset>
         <div class="acts" style="margin-top:14px"><button type="button" class="hot" data-start style="min-height:44px;padding:0 24px;font-size:15px">開始する</button>${saves.map((i) => `<button type="button" data-loadslot="${i}">スロット${i}を読み込む</button>`).join('')}</div>
         <p class="muted">この作品はフィクションです。実在の国名と地図を使っていますが、現実の出来事や意図を表すものではありません。地図データ：Natural Earth（パブリックドメイン）</p>
       </div>`);
       const m = document.getElementById('modal')!;
       m.querySelectorAll<HTMLElement>('[data-pick]').forEach((b) => b.onclick = () => { pick = b.dataset.pick!; sfx.click(); render(); });
-      m.querySelectorAll<HTMLElement>('[data-loadslot]').forEach((b) => b.onclick = () => { if (host.load(Number(b.dataset.loadslot))) { ui.closeModal(); start(false); } });
+      m.querySelectorAll<HTMLElement>('[data-loadslot]').forEach((b) => b.onclick = () => { if (host.load(Number(b.dataset.loadslot))) { ui.closeModal(); startMusic(); start(false); } });
       (m.querySelector('[data-start]') as HTMLElement).onclick = () => {
         const val = (n: string) => (m.querySelector(`input[name=${n}]:checked`) as HTMLInputElement).value;
         const doctrine = { land: val('dl'), sea: val('ds'), air: val('da'), intel: val('di') } as Doctrine;
         host.s = createGame({ player: pick, difficulty: val('diff') as Difficulty, relMode: val('rel') as 'real', doctrine });
         updateCamps(host.s); computeSupply(host.s);
         ui.newsSeen = 0; ui.weekSnap.week = -1; v.selected = null; view.lastKey = '';
-        ui.closeModal(); start(true);
+        ui.closeModal(); startMusic(); start(true);
       };
     };
     render();
@@ -143,7 +155,7 @@ async function boot() {
     const dt = Math.min(250, t - last); last = t;
     const s = host.s;
     if (s && !host.paused && !s.over && !document.getElementById('modal')!.dataset.kind && document.getElementById('tour')!.classList.contains('hidden')) {
-      acc += dt * speed;
+      acc += dt * speed; s.playMs = (s.playMs ?? 0) + dt;
       let n = 0;
       while (acc >= CFG.dayMs && n < 20) { step(s); acc -= CFG.dayMs; n++; ui.daily(); }
     }
@@ -151,7 +163,7 @@ async function boot() {
       for (const ev of events.splice(lastEv)) { if (ev.kind === 'strike') sfx.boom(); }
       lastEv = 0;
       view.draw(s, v, acc / CFG.dayMs);
-      if (frame++ % 15 === 0) ui.frame();
+      if (frame++ % 15 === 0) { ui.frame(); ui.tickTimer(); }
     }
     requestAnimationFrame(loop);
   };

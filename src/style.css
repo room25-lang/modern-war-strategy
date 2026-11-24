@@ -105,8 +105,9 @@ small { font-size: 11px; }
 #tools .pair { display: flex; gap: 6px; }
 #tools .pair button { flex: 1; justify-content: center; padding: 0; }
 
-#legend { position: fixed; right: 150px; top: 250px; width: 172px; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: 8px; background: rgba(28, 29, 31, 0.9); border: 1px solid var(--line2); font-size: 12px; color: var(--tx2); z-index: 3; max-width: 190px; }
+#legend { position: fixed; right: 150px; top: 250px; width: 190px; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: 8px; background: rgba(28, 29, 31, 0.9); border: 1px solid var(--line2); font-size: 12px; color: var(--tx2); z-index: 3; max-width: 190px; }
 #legend span { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx); }
+#legend i.gold { background: transparent; border: 2.5px solid #F0C75E; }
 #legend i.hatch { background: repeating-linear-gradient(135deg, #C9C2B0 0 3px, #6A6660 3px 6px); }
 #legend i { width: 26px; height: 14px; border-radius: 2px; flex: none; border: 1px solid rgba(0, 0, 0, 0.4); }
 #legend .sub { font-size: 11px; color: var(--mut); }
@@ -170,7 +171,7 @@ button.primary:hover:not(:disabled) { background: #E2756B; border-color: #E2756B
 /* 部隊一覧（拠点パネル） */
 .ulist { margin: 8px 10px 0; display: flex; flex-direction: column; gap: 3px; max-height: 150px; overflow: auto; }
 .urow { display: grid; grid-template-columns: 38px 70px 70px 40px 1fr; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; background: var(--bg3); font-size: 12px; }
-.urow.mine { box-shadow: inset 3px 0 0 #F2F2F2; }
+.urow.mine { box-shadow: inset 4px 0 0 #F0C75E; background: #23304A; }
 .urow .ui { font-weight: 700; } .urow .uo { color: var(--tx2); } .urow .bar { width: 70px; } .urow .us { color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hintline { margin: 6px 12px 0; font-size: 12px; color: var(--tx2); }
 .hintline b.r { color: #E8806F; }
@@ -188,3 +189,22 @@ button.primary:hover:not(:disabled) { background: #E2756B; border-color: #E2756B
 #tour .card .nav { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
 #tour .card .nav span { color: var(--mut); font-size: 12px; }
 #tour .card .nav div { display: flex; gap: 6px; }
+
+#top .timer { position: relative; display: flex; flex-direction: column; gap: 1px; padding: 0 14px; border-left: 1px solid var(--line2); min-width: 150px; }
+#top .timer span { font-size: 12px; color: var(--tx2); }
+#top .timer b { font-size: 17px; font-family: 'JetBrains Mono', monospace; }
+#top .timer b small { font-size: 11px; color: var(--mut); }
+#top .timer i { position: absolute; left: 14px; bottom: -6px; height: 3px; background: #9CCB8E; border-radius: 2px; max-width: calc(100% - 28px); }
+#top .timer.near i { background: #E8B36A; } #top .timer.over i { background: #E0606A; } #top .timer.over b { color: #F1B3A8; }
+
+.setup .docf p { margin: 2px 0 8px; }
+.setup .docs { grid-template-columns: 1fr 1fr; gap: 10px; }
+.setup .dcat h4 { margin: 0 0 6px; font-size: 13px; color: var(--tx2); }
+.setup .dopt { display: flex !important; align-items: flex-start; gap: 8px; margin: 0 0 6px !important; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 6px; background: var(--bg3); cursor: pointer; }
+.setup .dopt:has(input:checked) { border-color: #F0C75E; background: #2A2A24; }
+.setup .dopt input { margin-top: 3px; }
+.setup .dopt span { display: flex; flex-direction: column; gap: 2px; }
+.setup .dopt b { font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.setup .dopt em { font-style: normal; font-size: 11px; font-weight: 400; padding: 0 6px; border: 1px solid #F0C75E; border-radius: 3px; color: #F0C75E; }
+.setup .dopt small { color: var(--tx2); font-size: 12px; line-height: 1.45; }
+.setup .dopt small.for { color: var(--mut); }

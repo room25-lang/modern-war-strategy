@@ -116,6 +116,7 @@ export interface GameState {
   pendingPeace: { from: string; nodes: number[] } | null;
   forcedPeace: boolean;
   tips: string[];
+  playMs?: number;               // 実際に遊んだ時間（ミリ秒）
 }
 
 export interface Result { rank: string; achieved: string[]; notes: string[]; defeat: boolean }

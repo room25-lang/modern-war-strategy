@@ -10,7 +10,7 @@ import { campName, exitWar, facName, genCatName, nearestOwnKm, wName } from '../
 import type { MapView, ViewState } from '../render/map';
 import { drawMinimap } from '../render/map';
 import { flagSVG } from './flags';
-import { sfx, sound, toggleSound } from '../audio';
+import { music, setMood, setMusicVol, sfx, sound, toggleMusic, toggleSound } from '../audio';
 
 const $ = (sel: string) => document.querySelector(sel) as HTMLElement;
 const pct = (v: number) => `${Math.round(v)}%`;
@@ -93,6 +93,7 @@ export class UI {
       const me = this.me;
       this.weekSnap = { debt: this.debtRatio(), opinion: me.opinion, missile: this.missilePct(), ad: this.adPct(), week: weekOf(s) };
     }
+    setMood(s.phase === 'war' && this.me.engaged ? 'war' : 'calm');
     this.updateCand(); this.top(); this.legend(); this.nodePanel(); this.strikeBar(); this.renderPanel(); this.todo(); this.flushNews(); this.checkModals();
     const tb = document.querySelectorAll('#tools button');
     tb.forEach((b) => { const t = (b as HTMLElement).dataset.tool; b.classList.toggle('on', (t === 'mode' && this.h.v.mode === 'camp') || t === this.h.v.overlay); });
@@ -121,17 +122,31 @@ export class UI {
       <div class="met"><span>防空在庫</span><b class="${this.adPct() < 35 ? 'warn' : ''}">${pct(this.adPct())} ${d(this.adPct(), this.weekSnap.ad, 'up')}</b></div>
       <div class="met"><span>戦争目的の達成度</span><b>${c.warGoal.length ? pct(goalProgress(s, c.id) * 100) : '未設定'}</b></div>
       <div class="right">
+        ${this.timerHtml()}
         <div class="date">${date}</div>
         <button type="button" data-act="pause" aria-label="${this.h.paused ? '再生' : '一時停止'}" class="${this.h.paused ? 'hot' : ''}">${this.h.paused ? '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1 L12 7 L3 13 Z" fill="currentColor"></path></svg>' : '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="2" y="1" width="3.5" height="12" fill="currentColor"></rect><rect x="8.5" y="1" width="3.5" height="12" fill="currentColor"></rect></svg>'}</button>
         <button type="button" data-act="settings" aria-label="設定"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="3" fill="none" stroke="currentColor" stroke-width="1.6"></circle><path d="M9 1.5v2.5M9 14v2.5M1.5 9H4M14 9h2.5M3.7 3.7l1.8 1.8M12.5 12.5l1.8 1.8M3.7 14.3l1.8-1.8M12.5 5.5l1.8-1.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg></button>
       </div>`;
+  }
+  timerHtml() {
+    const ms = this.s.playMs ?? 0, lim = 2 * 3600 * 1000;
+    const f = (v: number) => { const t = Math.floor(v / 1000); return `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+    const over = ms >= lim;
+    return `<div class="timer ${over ? 'over' : ms > lim * 0.85 ? 'near' : ''}" title="実際に遊んだ時間（一時停止中は止まります）"><span>プレイ時間</span><b>${f(ms)}<small> / 2:00:00</small></b><i style="width:${Math.min(100, ms / lim * 100)}%"></i></div>`;
+  }
+  tickTimer() {
+    const el = document.querySelector('#top .timer'); if (!el) return;
+    el.outerHTML = this.timerHtml();
+    const ms = this.s.playMs ?? 0;
+    if (ms >= 2 * 3600 * 1000 && !this.s.tips.includes('timer2h')) { this.mark('timer2h'); this.toast('プレイ開始から2時間が経ちました。区切りのいいところで保存して休みましょう', 'warn'); sfx.alert(); }
+    else if (ms >= 105 * 60 * 1000 && !this.s.tips.includes('timer105')) { this.mark('timer105'); this.toast('2時間まであと15分です', 'info'); }
   }
   legend() {
     const v = this.h.v;
     const items: [string, string][] = v.mode === 'camp'
       ? [[CAMP_COLORS.self, '自国'], [CAMP_COLORS.ally, '同じ陣営'], [CAMP_COLORS.enemy, '敵（参戦中）'], [CAMP_COLORS.enemyIdle, '敵陣営（未参戦）'], [CAMP_COLORS.other, '別の陣営'], [CAMP_COLORS.neutral, '中立']]
       : MAJORS.map((m) => [m.color, m.name] as [string, string]);
-    $('#legend').innerHTML = items.map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('') + `<span><i class="hatch"></i>斜線＝占領地</span><span><i style="background:#2A2E35"></i>暗い所＝未索敵</span>`;
+    $('#legend').innerHTML = items.map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('') + `<span><i class="gold"></i>金の縁＝あなたの国</span><span><i class="hatch"></i>斜線＝占領地</span><span><i style="background:#2A2E35"></i>暗い所＝未索敵</span>`;
   }
 
   // ---------- 拠点パネル ----------
@@ -448,7 +463,7 @@ export class UI {
   }
   settingsModal() {
     const slot = (i: number) => { const raw = localStorage.getItem('mws_save_' + i); let info = '空き'; if (raw) { try { const j = JSON.parse(raw); info = `${C(j, j.player)?.name ?? ''} 第${Math.floor(j.day / 7) + 1}週`; } catch { info = '読めません'; } } return `<div class="kv"><span>スロット${i}：${info}</span><button type="button" data-act="save" data-arg="${i}">保存</button><button type="button" data-act="load" data-arg="${i}" ${raw ? '' : 'disabled'}>読み込む</button></div>`; };
-    this.modal('settings', `<h2>設定</h2>${[1, 2, 3].map(slot).join('')}<div class="acts"><button type="button" data-act="tour">チュートリアル</button><button type="button" data-act="sound">効果音：${sound.on ? 'オン' : 'オフ'}</button><button type="button" data-act="restart">最初から</button><button type="button" class="hot" data-act="closeModal">閉じる</button></div><p class="muted">地図データ：Natural Earth（パブリックドメイン）</p>`);
+    this.modal('settings', `<h2>設定</h2>${[1, 2, 3].map(slot).join('')}<div class="acts"><button type="button" data-act="tour">チュートリアル</button><button type="button" data-act="sound">効果音：${sound.on ? 'オン' : 'オフ'}</button><button type="button" data-act="music">BGM：${music.on ? 'オン' : 'オフ'}</button></div><label class="sl"><span>BGMの音量 <b>${Math.round(music.vol * 100)}</b></span><input type="range" min="0" max="1" step="0.05" value="${music.vol}" data-mvol></label><div class="acts"><button type="button" data-act="restart">最初から</button><button type="button" class="hot" data-act="closeModal">閉じる</button></div><p class="muted">地図データ：Natural Earth（パブリックドメイン）</p>`);
   }
 
   // ---------- 入力 ----------
@@ -521,6 +536,7 @@ export class UI {
       case 'save': this.h.save(Number(arg)); this.settingsModal(); this.toast(`スロット${arg}に保存しました`, 'good'); break;
       case 'load': if (this.h.load(Number(arg))) { this.closeModal(); this.toast('読み込みました', 'good'); } break;
       case 'sound': toggleSound(); this.settingsModal(); break;
+      case 'music': toggleMusic(); this.settingsModal(); break;
       case 'tour': this.closeModal(); this.tour(); break;
       case 'restart': this.closeModal(); this.h.restart(); break;
     }
@@ -540,6 +556,7 @@ export class UI {
       t.parentElement?.querySelectorAll<HTMLInputElement>('input').forEach((x) => { if (x !== t) x.value = String(v); });
       if (e.type === 'change') { (t as HTMLElement).blur(); this.renderPanel(); }
     }
+    else if ('mvol' in d) { setMusicVol(Number(t.value)); const b = t.parentElement?.querySelector('b'); if (b) b.textContent = String(Math.round(Number(t.value) * 100)); return; }
     else if (e.type !== 'change') return;
     else if (d.fleet) { this.mark('seaair'); this.act(A.assignFleet(s, me, Number(d.fleet), Number(t.value))); }
     else if (d.wing) { this.mark('seaair'); this.act(A.assignAir(s, me, Number(d.wing), Number(t.value))); }
