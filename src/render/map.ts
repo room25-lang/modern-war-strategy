@@ -79,7 +79,7 @@ export class MapView {
   clamp() {
     this.cam.z = Math.max(this.minZ(), Math.min(7, this.cam.z));
     const half = innerHeight / 2 / this.cam.z;
-    this.cam.y = this.spectator ? W.H / 2 : Math.max(half, Math.min(W.H - half, this.cam.y));
+    this.cam.y = this.spectator && W.H * this.cam.z <= innerHeight ? W.H / 2 : Math.max(half, Math.min(W.H - half, this.cam.y));
     this.cam.x = ((this.cam.x % W.W) + W.W) % W.W;
   }
   toWorld(sx: number, sy: number): [number, number] { return [(sx - innerWidth / 2) / this.cam.z + this.cam.x, (sy - innerHeight / 2) / this.cam.z + this.cam.y]; }
@@ -271,9 +271,9 @@ export class MapView {
     g.textBaseline = 'middle';
     for (const n of W.nodes) {
       const [x, y] = this.toScreen(n.x, n.y); if (!this.onScreen(x, y)) continue;
-      const showName = v.spectator ? n.capital && C(s, n.country).major : n.capital ? z > 0.45 : n.ind >= 3 ? z > 0.9 : z > 1.5;
+      const showName = v.spectator ? n.capital && (C(s, n.country).major || z > 1.2) || (z > 1.2 && n.ind >= 4) : n.capital ? z > 0.45 : n.ind >= 3 ? z > 0.9 : z > 1.5;
       if (showName) this.label(n.name, x + 9, y, n.capital ? 15 : 13, true);
-      if (!v.spectator) this.chips(s, n.id, x, y + 11);
+      if (!v.spectator) this.chips(s, n.id, x, y + 11); else if (z > 1.2) this.specChips(s, n.id, x, y + 11);
     }
     if (!v.spectator && (v.overlay === 'sea' || z > 0.8)) this.fleetChips(s);
     this.drawFx(now);
@@ -372,6 +372,13 @@ export class MapView {
       else if (seen && s.day - seen.day <= 21 && seen.land >= 0.5) this.counter(cx, y, { kind: 'land', n: `?≈${Math.round(seen.land)}`, str: 0, color: col, style: 'unknown' });
       else if (W.adj[n].some((e) => sameSide(s, s.nodes[e.to].ctrl, p))) this.counter(cx, y, { kind: 'land', n: '?', str: 0, color: col, style: 'unknown' });
     }
+  }
+  // 観戦用：すべての国の部隊を国の色で
+  specChips(s: GameState, n: number, x: number, y: number) {
+    const by = new Map<string, number[]>();
+    for (const u of s.units) if (u.node === n && !u.move && u.kind === 'land') (by.get(u.owner) ?? by.set(u.owner, []).get(u.owner)!).push(u.strength);
+    let cx = x - 25;
+    for (const [o, st] of by) cx += this.counter(cx, y, { kind: 'land', n: String(st.length), str: st.reduce((a, b) => a + b, 0) / st.length, color: C(s, o).color, style: 'ally', busy: s.units.some((u) => u.node === n && u.owner === o && u.order) }) + 3;
   }
   fleetChips(s: GameState) {
     const p = s.player; const psd = side(s, p);

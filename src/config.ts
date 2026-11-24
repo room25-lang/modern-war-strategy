@@ -16,7 +16,7 @@ export const CFG = {
   // 防空の1日あたり迎撃能力
   adUnitCap: 60, adSiteCap: 50, adRegionCap: 8,
   // 地上戦
-  combatLoss: 7, progressRate: 14, landSpeedKm: 380,
+  combatLoss: 7, progressRate: 20, landSpeedKm: 420,
   // 世論
   opinionWarDrift: -0.05, opinionPeaceTarget: 55,
   opinionNoMobilize: 40, opinionBudgetCap: 25, opinionForcedPeace: 12,
@@ -27,9 +27,9 @@ export const CFG = {
   genFactor: [1, 1.15, 1.3, 1.45],
   // 難易度（CPUの予算ボーナス、判断のぶれ、攻める閾値）
   diff: {
-    easy: { bonus: 1.0, noise: 0.35, attack: 1.5 },
-    normal: { bonus: 1.1, noise: 0.2, attack: 1.3 },
-    hard: { bonus: 1.25, noise: 0.1, attack: 1.15 },
+    easy: { bonus: 1.0, noise: 0.35, attack: 1.25 },
+    normal: { bonus: 1.1, noise: 0.2, attack: 1.05 },
+    hard: { bonus: 1.25, noise: 0.1, attack: 0.95 },
   },
   campJoin: 50,              // 中小国が陣営に入る傾き
   summitCost: 5, aidCost: 10, baseCost: 15, cyberCost: 15, mobilizeOpinion: 3,

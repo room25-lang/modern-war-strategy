@@ -1,6 +1,6 @@
 import './style.css';
 import type { Difficulty, Doctrine, GameState } from './types';
-import { loadWorld, W } from './world';
+import { loadWorld, proj, W } from './world';
 import { CFG } from './config';
 import { MAJORS } from './data/countries';
 import { createGame } from './game/state';
@@ -52,7 +52,7 @@ async function boot() {
   const ui = new UI(host);
   ui.mount();
   const tour = new Tour(ui); ui.tour = () => tour.start();
-  (window as unknown as { __mws: unknown }).__mws = { host, ui, A, step, createGame, updateCamps, computeSupply };
+  (window as unknown as { __mws: unknown }).__mws = { host, ui, A, step, createGame, updateCamps, computeSupply, proj };
 
   // ---------- 開始画面 ----------
   function setupScreen() {

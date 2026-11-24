@@ -362,7 +362,7 @@ export function computeSupply(s: GameState) {
 // ===================== 地上戦 =====================
 function landPower(s: GameState, u: Unit, attack: boolean, node: number): number {
   const c = C(s, u.owner);
-  const doc = c.doctrine.land === 'mobile' ? (attack ? 1.2 : 0.95) : (attack ? 0.95 : 1.25);
+  const doc = c.doctrine.land === 'mobile' ? (attack ? 1.25 : 0.95) : (attack ? 1.0 : 1.15);
   const sup = supplyAt(s, u.owner, node);
   const air = 0.75 + 0.5 * airShare(s, W.nodes[node].region, side(s, u.owner));
   const init = c.initiatorDays > 0 ? (attack ? 1.15 : 1) : 1;
@@ -391,13 +391,13 @@ function resolveOrder(s: GameState, o: Order) {
   const nd = W.nodes[o.to];
   const fort = (nd.capital ? 1.2 : 1) * (nd.ind >= 4 ? 1.1 : 1);
   let dp = def.reduce((a, u) => a + landPower(s, u, false, o.to) * (u.kind === 'ad' ? 0.3 : 1), 0) * fort * rand(0.85, 1.15);
-  dp += (s.nodes[o.to].owner === tCtrl ? 0.25 : 0.1);
+  dp += (s.nodes[o.to].owner === tCtrl ? 0.15 : 0.05);
   const ratio = ap / dp;
   const tot = ap + dp;
   const attLoss = CFG.combatLoss * dp / tot, defLoss = CFG.combatLoss * ap / tot;
   for (const u of att) hurt(s, u, attLoss / att.length * 1.4);
   for (const u of def) hurt(s, u, defLoss / Math.max(1, def.length) * 1.4);
-  o.progress += Math.max(0, ratio - 0.9) * CFG.progressRate + (def.every((u) => u.strength <= 0) ? 30 : 0);
+  o.progress += Math.max(0, ratio - 0.8) * CFG.progressRate + (def.every((u) => u.strength <= 0) ? 30 : 0);
   if (ratio < 0.6) o.badDays++; else o.badDays = 0;
   const avg = att.reduce((a, u) => a + u.strength, 0) / att.length;
   if (o.progress >= 100) return capture(s, o, att);
@@ -444,7 +444,8 @@ export function exitWar(s: GameState, id: string, gainer: string, capitulate = f
     const ns = s.nodes[n];
     if (ns.owner === id && ns.ctrl !== id && atWarCountry(s, ns.ctrl, id)) {
       const holder = C(s, ns.ctrl);
-      if (holder.warGoal.includes(n) || (capitulate && C(s, gainer).warGoal.includes(n))) { ns.owner = ns.ctrl; }
+      const touches = holder.major && W.adj[n].some((e) => s.nodes[e.to].owner === holder.id);
+      if (holder.warGoal.includes(n) || touches || (capitulate && C(s, gainer).warGoal.includes(n))) { ns.owner = ns.ctrl; }
       else ns.ctrl = id;
     } else if (ns.ctrl === id && ns.owner !== id) ns.ctrl = ns.owner;
   }
@@ -487,7 +488,7 @@ function peaceChecks(s: GameState) {
     if (!c.ai || !c.major) continue;
     const ex = exhaustion(s, c.id);
     const foe = strongestEnemy(s, c.id); if (!foe) continue;
-    if (ex > 0.66 && s.day - c.engagedDay > 56) {
+    if (ex > 0.78 && s.day - c.engagedDay > 98) {
       if (foe === s.player) { if (!s.pendingPeace) s.pendingPeace = { from: c.id, nodes: [] }; }
       else if (peaceAccept(s, c.id, foe, 'ask')) { news(s, `${c.name}が講和し、戦争から抜けました`, mine(s, c.id) ? 'bad' : 'good'); exitWar(s, c.id, foe); }
     }

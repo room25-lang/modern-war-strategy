@@ -3,7 +3,7 @@ import fs from 'fs';
 import { setWorld, W } from '../src/world';
 import { createGame } from '../src/game/state';
 import { step } from '../src/game/sim';
-import { campName } from '../src/game/sim';
+import { campName, events } from '../src/game/sim';
 
 (globalThis as any).performance ??= { now: () => Date.now() };
 setWorld(JSON.parse(fs.readFileSync('public/data/world.json', 'utf8')));
@@ -32,3 +32,7 @@ console.log('result', s.result, 'ms', Date.now() - t0);
 console.log('news sample:\n' + s.news.slice(-25).map((n) => `  [${Math.floor(n.day / 7)}週] ${n.text}`).join('\n'));
 console.log('WARS:', s.news.filter((n) => n.text.includes('開戦') || n.text.includes('降伏') || n.text.includes('講和')).map((n) => `[${Math.floor(n.day / 7) + 1}週] ${n.text}`).join('\n  '));
 console.log('CAPTURES:', s.news.filter((n) => n.text.includes('占領')).length, 'STRIKES:', s.news.filter((n) => n.text.includes('打撃')).length);
+const EU = new Set(['西欧', '北欧・バルト', '東欧', 'ロシア西部'].map((r) => W.regionIdx[r]));
+const capEU = s.news.filter((n) => n.text.includes('占領') && W.nodes.some((nd) => EU.has(nd.region) && n.text.includes(`が${nd.name}（`))).length;
+const changed = W.nodes.filter((n, i) => s.nodes[i].ctrl !== n.country).length;
+console.log('ALL_CAPTURES:', events.filter((e) => e.kind === 'capture').length, 'EU_CAPTURES:', capEU, 'NODES_CHANGED_HANDS:', changed, 'EU_CHANGED:', W.nodes.filter((n, i) => EU.has(n.region) && s.nodes[i].ctrl !== n.country).length);

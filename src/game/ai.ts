@@ -41,11 +41,11 @@ export function aiWarGoal(s: GameState, c: Country) {
     const o = s.nodes[n].ctrl;
     if (!(atWar(s, c.id, o) || enemyCampIdle(s, c.id, o))) continue;
     const d = Math.min(...mine.map((m) => nodeKm(m, n)));
-    if (d > 1600) continue;
+    if (d > 2400) continue;
     cand.push([n, (W.nodes[n].ind + 1) * 1000 / (d + 200)]);
   }
   cand.sort((a, b) => b[1] - a[1]);
-  c.warGoal = cand.slice(0, 2 + Math.floor(rand(0, 3))).map((x) => x[0]);
+  c.warGoal = cand.slice(0, 4 + Math.floor(rand(0, 4))).map((x) => x[0]);
 }
 
 // ---------- 毎週 ----------
@@ -57,9 +57,9 @@ export function aiWeekly(s: GameState, c: Country) {
   else A.setBudget(s, c.id, 38, 40, 22);
   const myUnits = s.units.filter((u) => u.owner === c.id);
   const count = (k: string) => myUnits.filter((u) => u.kind === k).length;
-  if ((atWarNow || c.warMode || campWar) && c.queue.length < 2) {
+  if ((atWarNow || c.warMode || campWar) && c.queue.length < 3) {
     if (c.stock.interceptor < c.stockInit.interceptor * 0.4 && c.stockInit.interceptor > 0) A.enqueue(s, c.id, 'ad');
-    else if (count('land') < c.landInit * 1.1) A.enqueue(s, c.id, 'land');
+    else if (count('land') < c.landInit * 1.5) A.enqueue(s, c.id, 'land');
     else if (c.major && chance(0.4)) A.enqueue(s, c.id, 'air');
     else if (c.major && chance(0.3) && (W.nodesByCountry[c.id] ?? []).some((n) => W.nodes[n].port)) A.enqueue(s, c.id, 'fleet');
     else A.enqueue(s, c.id, 'land');
@@ -68,12 +68,16 @@ export function aiWeekly(s: GameState, c: Country) {
     const cats = (['fighter', 'armor', 'ad', 'naval'] as const).filter((k) => c.gen[k] < 3).sort((a, b) => c.gen[a] - c.gen[b]);
     if (cats.length) A.startGen(s, c.id, cats[0]);
   }
-  if (atWarNow && count('land') < c.landInit * 0.6 && c.opinion >= 45) A.mobilize(s, c.id);
+  if (atWarNow && count('land') < c.landInit * 0.9 && c.opinion >= 42) A.mobilize(s, c.id);
+  // 戦争目的をほぼ達成したら、次の目標を足して拡張を続ける
+  if (atWarNow && c.major && c.warGoal.length && c.warGoal.filter((n) => sameSide(s, s.nodes[n].ctrl, c.id)).length >= c.warGoal.length * 0.6) {
+    const old = new Set(c.warGoal); aiWarGoal(s, c); c.warGoal = [...new Set([...old, ...c.warGoal])];
+  }
   // 参戦の判断
   const leftBefore = c.peace['_'] !== undefined;
   if (!atWarNow && campWar && (c.peace['_'] ?? 0) <= s.day && (!leftBefore || (exhaustion(s, c.id) < 0.3 && c.opinion > 50))) {
     const allyInTrouble = Object.values(s.countries).some((o) => o.engaged && sameSide(s, o.id, c.id) && o.major && (s.nodes[o.capital].ctrl !== o.id || exhaustion(s, o.id) > 0.5));
-    if ((c.major && (allyInTrouble || chance(0.12))) || (!c.major && c.fights && chance(0.05))) A.declareJoin(s, c.id);
+    if ((c.major && (allyInTrouble || chance(0.25))) || (!c.major && c.fights && chance(0.1))) A.declareJoin(s, c.id);
   }
   if (!atWarNow) return;
   // 前線の地域
@@ -113,8 +117,8 @@ export function aiDaily(s: GameState, c: Country) {
   if (!c.engaged || (!c.major && !c.fights)) return;
   const d = diff(s);
   const offset = (s.day + Number(c.id)) % 2;
-  if (offset === 0) attacks(s, c, d.attack, d.noise);
-  if ((s.day + Number(c.id)) % 4 === 1) rebalance(s, c);
+  void offset; attacks(s, c, d.attack, d.noise);
+  if ((s.day + Number(c.id)) % 2 === 1) rebalance(s, c);
   if (c.major && (s.day + Number(c.id)) % 3 === 0) strikes(s, c);
 }
 
@@ -139,10 +143,10 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
     for (const e of W.adj[n]) {
       if (!hostileNode(s, c.id, e.to) || targeted.has(e.to)) continue;
       if (!atWar(s, c.id, s.nodes[e.to].ctrl) && !c.major) continue;
-      const ratio = myP / estPower(s, e.to, noise) * (c.warGoal.includes(e.to) ? 1.3 : 1) * (1 + W.nodes[e.to].ind * 0.03);
+      const ratio = myP / estPower(s, e.to, noise) * (c.warGoal.includes(e.to) ? 1.4 : 1) * (1 + W.nodes[e.to].ind * 0.04) * (s.nodes[e.to].owner !== s.nodes[e.to].ctrl ? 1.2 : 1);
       if (ratio > bs) { bs = ratio; best = e.to; }
     }
-    if (best >= 0 && bs >= thr * (keep ? 1 : 1.3)) { A.orderTo(s, c.id, n, best); targeted.add(best); }
+    if (best >= 0 && bs >= thr * (keep ? 1 : 1.2)) { A.orderTo(s, c.id, n, best); targeted.add(best); }
     else if (best >= 0 && s.difficulty === 'hard' && chance(0.05)) A.orderTo(s, c.id, n, best); // 陽動
   }
   // 上陸作戦（陸の前線がないとき）
@@ -157,7 +161,7 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
 }
 function rebalance(s: GameState, c: Country) {
   const nodes = ownNodes(s, c.id);
-  const threat = (n: number) => W.adj[n].reduce((a, e) => a + (atWar(s, c.id, s.nodes[e.to].ctrl) ? estPower(s, e.to, 0.2) : 0), 0);
+  const threat = (n: number) => W.adj[n].reduce((a, e) => a + (atWar(s, c.id, s.nodes[e.to].ctrl) || (c.major && hostileNode(s, c.id, e.to)) ? estPower(s, e.to, 0.2) : 0), 0);
   const near = (n: number) => nodes.some((m) => nodeKm(m, n) < 2200);
   const side_: number[] = []; for (let i = 0; i < W.nodes.length; i++) if (sameSide(s, s.nodes[i].ctrl, c.id) && (s.nodes[i].ctrl === c.id || near(i))) side_.push(i);
   const front = side_.filter((n) => threat(n) > 0).sort((a, b) => threat(b) / estPower(s, b, 0) - threat(a) / estPower(s, a, 0));
@@ -166,7 +170,7 @@ function rebalance(s: GameState, c: Country) {
   let tgt = front[0];
   if (threat(tgt) < estPower(s, tgt, 0) * 0.9) {
     // 攻勢の準備：戦争目的か弱い敵に接する前線へ兵を集める
-    const score = (n: number) => W.adj[n].reduce((a, e) => a + (atWar(s, c.id, s.nodes[e.to].ctrl) ? (c.warGoal.includes(e.to) ? 3 : 1) / estPower(s, e.to, 0.2) : 0), 0);
+    const score = (n: number) => W.adj[n].reduce((a, e) => a + (hostileNode(s, c.id, e.to) ? (c.warGoal.includes(e.to) ? 3 : 1) / estPower(s, e.to, 0.2) : 0), 0);
     tgt = [...front].sort((a, b) => score(b) - score(a))[0];
   }
   const src = interior.sort((a, b) => nodeKm(a, tgt) - nodeKm(b, tgt))[0];
