@@ -65,7 +65,7 @@ async function boot() {
       const saves = [1, 2, 3].filter((i) => localStorage.getItem('mws_save_' + i));
       ui.modal('setup', `<div class="setup">
         <h1>現代戦ストラテジー（仮）</h1>
-        <p class="lead">架空の近未来、世界大戦。国家指導者として、最大4時間で戦争の入口から出口までを決めます。<br>本質は「見る（索敵）・削る（在庫と補給）・終わらせる（世論と講和）」。</p>
+        <p class="lead">架空の近未来、世界大戦。国家指導者として、最大2時間で戦争の入口から出口までを決めます。<br>本質は「見る（索敵）・削る（在庫と補給）・終わらせる（世論と講和）」。</p>
         <div class="cards">${MAJORS.map((m) => `<button type="button" class="card ${m.id === pick ? 'on' : ''}" data-pick="${m.id}">${flagSVG(m.id, m.color, 48, 32)}<b>${m.name}</b><small>${m.trait}</small></button>`).join('')}</div>
         <div class="row">
           <fieldset><legend>難易度</legend>${radio('diff', 'easy', 'やさしい', false)}${radio('diff', 'normal', 'ふつう', true)}${radio('diff', 'hard', '難しい', false)}</fieldset>

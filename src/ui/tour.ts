@@ -13,7 +13,7 @@ export class Tour {
     const el = (sel: string) => () => { const e = document.querySelector(sel) as HTMLElement | null; return e && e.offsetParent !== null ? e.getBoundingClientRect() : null; };
     const capRect = () => { const n = W.nodes[ui.me.capital]; const [x, y] = h.view.toScreen(n.x, n.y); return new DOMRect(x - 40, y - 26, 150, 80); };
     this.steps = [
-      { title: 'ようこそ、指導者', body: `あなたは<b>${ui.me.name}</b>の国家指導者です。約2年（1分＝1週間）のあいだに、戦争の入口から出口までを決めます。<br>大事なのは3つだけ：<b>見る</b>（敵を索敵する）、<b>削る</b>（ミサイル・迎撃弾・予算・補給の削り合い）、<b>終わらせる</b>（世論が尽きる前に講和する）。` },
+      { title: 'ようこそ、指導者', body: `あなたは<b>${ui.me.name}</b>の国家指導者です。約4年半（30秒＝1週間、最大2時間）のあいだに、戦争の入口から出口までを決めます。<br>大事なのは3つだけ：<b>見る</b>（敵を索敵する）、<b>削る</b>（ミサイル・迎撃弾・予算・補給の削り合い）、<b>終わらせる</b>（世論が尽きる前に講和する）。` },
       { title: '上の帯：国の体力', body: '予算・国債・<b>世論</b>・ミサイルと防空の<b>在庫</b>・戦争目的の達成度です。世論か在庫が尽きた側が負けます。数字の横の「+2/週」は先週からの変化です。', target: el('#top') },
       { title: 'あなたの部隊', body: '<b>金色の枠</b>の駒があなたの部隊、<b>金色に縁取られた地域</b>があなたの国です。<b>□に×</b>が師団、<b>□に半円</b>が防空大隊、数字が部隊の数、下の線が強さです。<br>拠点を押すと、行ける先が光ります。<b>白い点線の輪</b>を押すと移動、<b>赤い輪</b>を押すと攻撃です（ドラッグでも動かせます）。', target: capRect, before: () => { h.v.selected = ui.me.capital; h.view.centerOn(ui.me.capital, 1.5); ui.daily(); } },
       { title: '拠点パネル', body: '選んだ拠点の情報です。いる部隊を1つずつ、強さと「待機／移動中／攻勢中」で表示します。敵の拠点なら「打撃」や「戦争目的に加える」がここに出ます。', target: el('#nodePanel') },

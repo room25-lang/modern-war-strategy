@@ -138,8 +138,8 @@ export class UI {
     const el = document.querySelector('#top .timer'); if (!el) return;
     el.outerHTML = this.timerHtml();
     const ms = this.s.playMs ?? 0;
-    if (ms >= 4 * 3600 * 1000 && !this.s.tips.includes('timer4h')) { this.mark('timer4h'); this.toast('プレイ開始から4時間が経ちました。区切りのいいところで保存して休みましょう', 'warn'); sfx.alert(); }
-    else if (ms >= 225 * 60 * 1000 && !this.s.tips.includes('timer225')) { this.mark('timer225'); this.toast('4時間まであと15分です', 'info'); }
+    if (ms >= 2 * 3600 * 1000 && !this.s.tips.includes('timer2h')) { this.mark('timer2h'); this.toast('プレイ開始から2時間が経ちました。区切りのいいところで保存して休みましょう', 'warn'); sfx.alert(); }
+    else if (ms >= 105 * 60 * 1000 && !this.s.tips.includes('timer105')) { this.mark('timer105'); this.toast('2時間まであと15分です', 'info'); }
   }
   legend() {
     const v = this.h.v;
