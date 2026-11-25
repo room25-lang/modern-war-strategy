@@ -61,6 +61,8 @@ export function aiExpand(s: GameState, c: Country) {
   const alive = s.majors.filter((m) => !C(s, m).capitulated);
   const avg = alive.reduce((a, m) => a + pow(m), 0) / Math.max(1, alive.length);
   const strong = myPow / Math.max(1, avg); // 1より大きいほど大国
+  // 本土に敵の大軍が迫っているあいだは、新しい戦争を始めない（終盤の首位は除く）
+  if (c.major && !hegemon && homeThreatened(s, c)) return;
   const foeList = Object.values(s.countries).filter((o) => atWar(s, c.id, o.id));
   const foes = foeList.filter((o) => o.major).length + Math.ceil(foeList.filter((o) => !o.major).length / 3); // 中小国は3か国で1と数える
   if (foes >= (hegemon ? 6 : c.major ? Math.min(5, 2 + Math.floor(strong)) : 1)) return;
@@ -178,6 +180,16 @@ function estPower(s: GameState, n: number, noise: number): number {
   return Math.max(0.25, p * rand(1 - noise, 1 + noise));
 }
 const unitNodes = (s: GameState, id: string) => [...new Set(s.units.filter((u) => u.owner === id && u.kind === 'land' && !u.move && u.node >= 0 && sameSide(s, s.nodes[u.node].ctrl, id)).map((u) => u.node))];
+// 本土に敵の大軍が迫っているか（本土の守りの兵より、隣の敵師団＋奪われた本土の拠点が多い）
+function homeThreatened(s: GameState, c: Country): boolean {
+  let threatH = 0, guard = 0;
+  for (const n of W.nodesByCountry[c.id] ?? []) {
+    if (s.nodes[n].ctrl !== c.id) { threatH += 2; continue; }
+    guard += landAt(s, n).filter((u) => u.owner === c.id).length;
+    for (const e of W.adj[n]) threatH += landAt(s, e.to).filter((u) => atWar(s, c.id, u.owner)).length;
+  }
+  return threatH > guard * 1.2;
+}
 function attacks(s: GameState, c: Country, thr: number, noise: number) {
   const busy = new Set(s.orders.filter((o) => o.owner === c.id).map((o) => o.from));
   const targeted = new Set(s.orders.filter((o) => sameSide(s, o.owner, c.id)).map((o) => o.to));
@@ -186,7 +198,12 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
     const mine = landAt(s, n).filter((u) => u.owner === c.id && !u.order);
     if (!mine.length) continue;
     const enemiesNear = W.adj[n].filter((e) => hostileNode(s, c.id, e.to)).length;
-    const keep = mine.length >= 2 || enemiesNear > 1 ? 1 : 0;
+    let keep = mine.length >= 2 || enemiesNear > 1 ? 1 : 0;
+    // 本土の守り：首都には2個師団、隣に敵の大軍がいる本土の拠点にはその7割を残す（攻めに出て本土が空にならないように）
+    if (c.major && !(lateGame(s) && c.id === leader(s)) && (W.nodesByCountry[c.id] ?? []).includes(n)) {
+      const threatN = W.adj[n].reduce((a, e) => a + landAt(s, e.to).filter((u) => atWar(s, c.id, u.owner)).length, 0);
+      keep = Math.max(keep, Math.ceil(threatN * CFG.homeGuard), n === c.capital ? 2 : 0);
+    }
     if (mine.length - keep <= 0) continue;
     const myP = mine.slice(0, mine.length - keep).reduce((a, u) => a + u.strength / 100 * genF(c, 'armor') * (c.doctrine.land === 'mobile' ? 1.2 : 1), 0);
     let best = -1, bs = 0;
@@ -201,7 +218,7 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
   }
   // 上陸作戦（陸の前線がないとき）
   const blue = CFG.blueWater.includes(c.id);
-  if (c.major && (s.day + Number(c.id)) % (blue ? 4 : 7) === 0) {
+  if (c.major && (s.day + Number(c.id)) % (blue ? 4 : 7) === 0 && ((lateGame(s) && c.id === leader(s)) || !homeThreatened(s, c))) { // 本土が危ないときは海の向こうへ出ない
     const ports: number[] = []; for (let n = 0; n < W.nodes.length; n++) if (W.nodes[n].port && hostileNode(s, c.id, n)) ports.push(n);
     const goals = [...c.warGoal.filter((g) => ports.includes(g)), ...ports.filter((g) => !c.warGoal.includes(g))];
     let launched = 0;
@@ -213,7 +230,7 @@ function attacks(s: GameState, c: Country, thr: number, noise: number) {
       if (from === undefined) continue;
       const myP = (idle(from).length - 1) * CFG.amphibPowerBlue;
       const minorT = !C(s, s.nodes[g].ctrl).major;
-      if (blue || minorT ? myP / estPower(s, g, 0.2) >= (minorT ? 1.5 : 2) : estPower(s, g, 0.2) < 1.2) { A.orderTo(s, c.id, from, g); targeted.add(g); if (++launched >= (blue ? 2 : 1)) break; }
+      if (blue || minorT ? myP / estPower(s, g, 0.2) >= (minorT ? 1.5 : 1.7) : estPower(s, g, 0.2) < 1.2) { A.orderTo(s, c.id, from, g); targeted.add(g); if (++launched >= (blue ? 2 : 1)) break; }
     }
   }
 }
