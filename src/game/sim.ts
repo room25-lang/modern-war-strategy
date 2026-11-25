@@ -508,6 +508,7 @@ function capture(s: GameState, o: Order, att: Unit[]) {
 function capitalFallen(s: GameState, id: string, by0: string) {
   const by = annexer(s, id, by0);
   const c = C(s, id); const B = C(s, by);
+  if (!B.major && !c.major && !CFG.minorAnnexMinor) { news(s, `${c.name}は首都${W.nodes[c.capital].name}を${B.name}に奪われました`, 'warn'); return; } // 中小国どうしでは併合しない
   const home = W.nodesByCountry[id] ?? [];
   if (c.major && (id === s.player || CFG.capitalHoldAI) && home.filter((n) => s.nodes[n].ctrl === id).length >= home.length * CFG.capitalHold) {
     news(s, `${c.name}は首都${W.nodes[c.capital].name}を失いましたが、政府を移して戦いを続けています`, id === s.player ? 'bad' : 'warn'); return;
@@ -518,7 +519,7 @@ function capitalFallen(s: GameState, id: string, by0: string) {
 }
 // 中小国が大国を倒したときは、同じ陣営で一緒に戦っている主要国が併合する（中小国が世界一にならないように）
 function annexer(s: GameState, id: string, by: string): string {
-  if (C(s, by).major || !C(s, id).major) return by;
+  if (C(s, by).major) return by; // 中小国が勝ったときは、同じ陣営で一緒に戦っている主要国が併合する
   const ms = s.majors.filter((m) => sameSide(s, m, by) && atWar(s, m, id) && !C(s, m).capitulated).sort((x, y) => (share[y] ?? 0) - (share[x] ?? 0));
   return ms[0] ?? by;
 }
@@ -593,6 +594,7 @@ function peaceChecks(s: GameState) {
     const by: Record<string, number> = {}; for (const n of home) { const k = s.nodes[n].ctrl; if (k !== c.id && atWar(s, k, c.id)) by[k] = (by[k] ?? 0) + 1; }
     const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0]; if (!top) continue;
     top[0] = annexer(s, c.id, top[0]);
+    if (!C(s, top[0]).major && !c.major && !CFG.minorAnnexMinor) continue;
     news(s, `【併合】${c.name}は本土の大半を失って降伏し、${C(s, top[0]).name}に併合されました`, mine(s, c.id) ? 'bad' : mine(s, top[0]) ? 'good' : 'info');
     if (c.id === s.player && !c.ai) { endGame(s, true); return; }
     annex(s, c.id, top[0]);
